@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -21,21 +22,24 @@ class Contour:
         self.transform = opt.transform
         self.transform_ori = opt.transform_ori
         self.patch_size = opt.patch_size
-        self.ihc = opt.ihc
+        self.ihc_ext = opt.ihc_ext
+
+        self.slide_list = opt.slide_list
 
         for directory in [self.slide_dir, self.patch_dir, self.contour_dir, self.transform_dir]:
             os.makedirs(directory, exist_ok=True)
 
     def contour(self, slide):
-        logger.info(f'start to process {slide}')
+        slide_name = os.path.splitext(slide)[0]
+        logger.info(f'start to process {slide_name}')
         patches = os.listdir(self.patch_dir)
         features = []
         affine_features = []
         for patch in patches:
-            if not patch.startswith(slide):
+            if not patch.startswith(f'{slide_name}'):
                 continue
             cnt_info = self.get_contours(patch)
-            f, af = self.get_features(cnt_info, patch, slide)
+            f, af = self.get_features(cnt_info, patch, slide_name)
             if f:
                 features.extend(f)
             if af:
@@ -46,18 +50,18 @@ class Contour:
             "features": features
         }
 
-        with open(os.path.join(self.contour_dir, f'{slide}.geojson'), 'w') as f:
+        with open(os.path.join(self.contour_dir, f'{slide_name}.geojson'), 'w') as f:
             json.dump(geojson, f, indent=2)
-            logger.info(f'generated {slide} contour json!!!')
+            logger.info(f'generated {slide_name}.geojson contour json!!!')
         if self.transform:
             affine_geojson = {
                 "type": "FeatureCollection",
                 "features": affine_features
             }
-            with open(os.path.join(self.contour_dir, f"{slide}-{self.transform_ori}.geojson"), 'w') as f:
+            with open(os.path.join(self.contour_dir, f"{slide_name.replace(f'-{self.ihc_ext}', '')}.geojson"), 'w') as f:
                 json.dump(affine_geojson, f, indent=2)
 
-            logger.info(f'generated {slide}-{self.transform_ori} contour json!!!')
+            logger.info(f'generated {slide_name.replace(f"-{self.ihc_ext}", "")}.geojson contour json!!!')
 
     def get_contours(self, patch: str):
         lower_bound = np.array([20, 20, 30])
@@ -97,9 +101,9 @@ class Contour:
                 cnt = np.vstack((cnt, cnt[0]))  # 闭环
 
                 if self.transform:
-                    with open(os.path.join(self.transform_dir, f'{slide_name}-{self.transform_ori}.json'), 'r') as f:
+                    with open(os.path.join(self.transform_dir, f'{slide_name}.json'), 'r') as f:
                         reg_params = json.load(f)
-                    # 后缀要改，一个文件存多个参数的情况
+                    # TODO 一个 HE 对应多个 IHC
                     a, b, c, d, e, f = reg_params[f'{slide_name}.svs']
                     affine_cnt = affine_transform(cnt, a, b, c, d, e, f)
                     affine_cnt = np.reshape(affine_cnt, (len(affine_cnt) // 2, 2))
@@ -125,20 +129,22 @@ class Contour:
                 features.append(feature)
         return features, affine_features
 
-    def run(self):
-        slides = [os.path.splitext(os.path.basename(file))[0] for file in os.listdir(self.slide_dir) if
-                  self.ihc in file]
+    @property
+    def slides(self):
+        if self.slide_list:
+            return self.slide_list
+        else:
+            return [file for file in os.listdir(self.slide_dir) if self.ihc_ext in file]
 
+    def run(self):
         with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [executor.submit(self.contour, slide) for slide in slides]
-            for future in futures:
-                future.result()
+            [executor.submit(self.contour, slide) for slide in self.slides]
 
 
 parser = BaseOptions().parse()
 parser.add_argument('--transform', type=bool, default=True)
 parser.add_argument('--transform_ori', type=str, default='IHC2HE')
-parser.add_argument('--ihc', type=str, default='CKpan')
+parser.add_argument('--ihc_ext', type=str, default='CK')
 if __name__ == '__main__':
     args = parser.parse_args()
     Contour(args).run()

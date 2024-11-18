@@ -20,10 +20,12 @@ class PatchGenerate:
         self.coord_dir = opt.coord_dir if opt.coord_dir else os.path.join(opt.data_root, f'patch/{opt.patch_size}/coord')
         self.count_dir = opt.count_dir if opt.count_dir else os.path.join(opt.data_root, f'patch/{opt.patch_size}/')
         self.patch_dir = opt.patch_dir if opt.patch_dir else os.path.join(opt.data_root, f'patch/{opt.patch_size}/image')
-        self.random_sample = opt.random_sample
 
+        self.random_sample = opt.random_sample
         self.patch_size = opt.patch_size
         self.patch_level = opt.patch_level
+        self.slide_list = opt.slide_list
+
         for directory in [self.slide_dir, self.coord_dir, self.patch_dir, self.coord_dir]:
             if not os.path.exists(directory):
                 os.makedirs(directory, exist_ok=True)
@@ -51,18 +53,22 @@ class PatchGenerate:
 
         logger.info(f'Process {slide} Success!')
 
-    def run(self):
-        slides = [f for f in os.listdir(self.slide_dir) if os.path.isfile(os.path.join(self.slide_dir, f))]
+    @property
+    def slides(self):
+        if self.slide_list:
+            return self.slide_list
+        else:
+            return [f for f in os.listdir(self.slide_dir) if os.path.isfile(os.path.join(self.slide_dir, f))]
 
+    def run(self):
         with ThreadPoolExecutor(max_workers=12) as executor:
-            futures = [executor.submit(self.generate, slide) for slide in slides]
+            futures = [executor.submit(self.generate, slide) for slide in self.slides]
             for future in futures:
                 future.result()
 
 
 parser = BaseOptions().parse()
 parser.add_argument('--random_sample', type=int, default=-1, help='')
-
 if __name__ == '__main__':
     args = parser.parse_args()
     PatchGenerate(args).run()

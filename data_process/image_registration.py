@@ -153,13 +153,13 @@ class Registration:
         self.patch_size = opt.patch_size
         self.patch_level = opt.patch_level
         self.transform_ori = opt.transform_ori
-        self.ihc_suffix = opt.ihc_suffix
+        self.ihc_ext = opt.ihc_ext
         self.alpha = opt.alpha
+        self.slide_list = opt.slide_list
 
         for directory in [self.slide_dir, self.coord_dir, self.patch_dir, self.coord_dir, self.points_dir,
                           self.transform_dir, self.he_dir, self.ihc_dir, self.regi_dir]:
-            if not os.path.exists(directory):
-                os.makedirs(directory, exist_ok=True)
+            os.makedirs(directory, exist_ok=True)
 
         json2txt(self.points_dir)
 
@@ -219,19 +219,19 @@ class Registration:
         try:
             he_points = self.get_points_from_txt(filename)
             result = {}
-            for ihc in self.ihc_suffix:
-                ihc_points = get_points_from_txt(os.path.join(self.points_dir, f'{filename}-{ihc}.txt'))
-                if self.transform_ori == "HE2IHC":
-                    points1, points2 = he_points, ihc_points.flatten()
-                else:
-                    points1, points2 = ihc_points, he_points.flatten()
-                popt, _ = curve_fit(affine_transform, points1, points2, p0=[0, 0, 0, 0, 0, 0])
-                result[f'{filename}-{ihc}.svs'] = list(popt)
-            result_json = os.path.join(self.transform_dir, f'{filename}-{self.transform_ori}.json')
+            ihc_points = get_points_from_txt(os.path.join(self.points_dir, f'{filename}-{self.ihc_ext}.txt'))
+            if self.transform_ori == "HE2IHC":
+                points1, points2 = he_points, ihc_points.flatten()
+            else:
+                points1, points2 = ihc_points, he_points.flatten()
+            popt, _ = curve_fit(affine_transform, points1, points2, p0=[0, 0, 0, 0, 0, 0])
+            result[f'{filename}-{self.ihc_ext}.svs'] = list(popt)
+            json_name = f'{filename}.json' if self.transform_ori == "HE2IHC" else f'{filename}-{self.ihc_ext}.json'
+            result_json = os.path.join(self.transform_dir, json_name)
             with open(result_json, 'w') as f:
                 json.dump(result, f)
         except:
-            # traceback.print_exc()
+            traceback.print_exc()
             return
 
     def merge_show_img(self, img1, img2, save_path):
@@ -277,57 +277,69 @@ class Registration:
         plt.show()
 
     def registration(self, slide):
-
         slide_name, slide_ext = os.path.splitext(os.path.basename(slide))
         try:
             self.get_reg_param(slide_name)
-            affine_path = os.path.join(self.transform_dir, f'{slide_name}-{self.transform_ori}.json')
+            file_name = f'{slide_name}.json' if self.transform_ori == 'HE2IHC' else f'{slide_name}-{self.ihc_ext}.json'
+            affine_path = os.path.join(self.transform_dir, file_name)
             with open(affine_path, 'r') as f:
                 reg_params = json.load(f)
         except:
-            # traceback.print_exc()
+            traceback.print_exc()
             return
 
         file = h5py.File(os.path.join(self.coord_dir, f'{slide_name}.h5'), mode='r')
-        he_points = list(file['coords'][:])
+        src_points = list(file['coords'][:])
         he_path = os.path.join(self.slide_dir, slide)
         he_wsi = Aslide(he_path) if '.kfb' in slide else openslide.OpenSlide(he_path)
 
-        for ihc in self.ihc_suffix:
-            ihc_path = os.path.join(self.slide_dir, f'{slide_name}-{ihc}{slide_ext}')
-            ihc_wsi = Aslide(ihc_path) if '.kfb' in slide else openslide.OpenSlide(ihc_path)
-            a, b, c, d, e, f = reg_params[f'{slide_name}-{ihc}.svs']
 
-            for i, coord in enumerate(he_points):
-                coord = np.array([int(coord[0]), int(coord[1])])
+        ihc_path = os.path.join(self.slide_dir, f'{slide_name}-{self.ihc_ext}{slide_ext}')
+        ihc_wsi = Aslide(ihc_path) if '.kfb' in slide else openslide.OpenSlide(ihc_path)
+        a, b, c, d, e, f = reg_params[f'{slide_name}-{self.ihc_ext}.svs']
 
-                he_img_path = os.path.join(self.he_dir, f'{slide_name}_{coord[0]}_{coord[1]}.png')
-                ihc_img_path = os.path.join(self.ihc_dir, f'{slide_name}_{coord[0]}_{coord[1]}.png')
+        for i, coord in enumerate(src_points):
+            coord = (int(coord[0]), int(coord[1]))
+            if self.transform_ori == 'HE2IHC':
+                src_wsi, dst_wsi = he_wsi, ihc_wsi
+            else:
+                src_wsi, dst_wsi = ihc_wsi, he_wsi
 
-                he_img = he_wsi.read_region(coord, self.patch_level, (self.patch_size, self.patch_size))
-                if isinstance(he_img, np.ndarray):
-                    he_img = Image.fromarray(he_img)
-                ihc_points = affine_transform(get_square_corner_points(coord, self.patch_size), a, b, c, d, e, f)
-                ihc_points = np.reshape(ihc_points, (len(ihc_points) // 2, 2))
-                try:
-                    cropped_img, corner_points = self.crop_image_and_adjust_corners(ihc_wsi, ihc_points)
-                except:
-                    continue
-                ihc_img = warp_image_to_square(cropped_img, corner_points, self.patch_size)
+            src_img = src_wsi.read_region(coord, self.patch_level, (self.patch_size, self.patch_size))
+            if isinstance(src_img, np.ndarray):
+                src_img = Image.fromarray(src_img)
+            dst_points = affine_transform(get_square_corner_points(coord, self.patch_size), a, b, c, d, e, f)
+            dst_points = np.reshape(dst_points, (len(dst_points) // 2, 2))
+            try:
+                cropped_img, corner_points = self.crop_image_and_adjust_corners(dst_wsi, dst_points)
+            except:
+                continue
+            ihc_img = warp_image_to_square(cropped_img, corner_points, self.patch_size)
 
-                he_img.save(he_img_path)
-                ihc_img.save(ihc_img_path)
-                save_path = os.path.join(self.regi_dir, f'{slide_name}-{ihc}_{coord[0]}_{coord[1]}.png')
-                if (i + 1) % (len(he_points) // 20) == 0:
-                    self.merge_show_img(he_img, ihc_img, save_path)
+            # he_img_path = os.path.join(self.he_dir, f'{slide_name}_{coord[0]}_{coord[1]}.png')
+            # ihc_img_path = os.path.join(self.ihc_dir, f'{slide_name}_{coord[0]}_{coord[1]}.png')
+            # he_img.save(he_img_path)
+            # ihc_img.save(ihc_img_path)
+            save_path = os.path.join(self.regi_dir, f'{slide_name}-{self.ihc_ext}_{coord[0]}_{coord[1]}.png')
+            if (i + 1) % (len(src_points) // 20) == 0:
+                self.merge_show_img(src_img, ihc_img, save_path)
+
+    @property
+    def slides(self):
+        if self.slide_list:
+            return self.slide_list
+        else:
+            slides = [f for f in os.listdir(self.slide_dir) if os.path.isfile(os.path.join(self.slide_dir, f))]
+            slides = [slide for slide in slides if not any(s in slide for s in self.ihc_ext)]
+            points = os.listdir(self.points_dir)
+            return [slide for slide in slides if any(os.path.splitext(slide)[0] in pt for pt in points)]
 
     def run(self):
-        slides = [f for f in os.listdir(self.slide_dir) if os.path.isfile(os.path.join(self.slide_dir, f))]
-        slides = [slide for slide in slides if not any(s in slide for s in self.ihc_suffix)]
+
         with ThreadPoolExecutor(max_workers=8) as executor:
-            for slide in slides:
-                executor.submit(self.registration, slide)
-        self.split_data()
+            [executor.submit(self.registration, slide) for slide in self.slides]
+
+        # self.split_data()
 
     def split_data(self):
         train_a_dir = os.path.join(self.patch_dir, 'trainA')
@@ -350,8 +362,8 @@ class Registration:
 
 parser = BaseOptions().parse()
 parser.add_argument('--alpha', type=int, default=100, help='')
-parser.add_argument('--transform_ori', type=str, default='HE2IHC')
-parser.add_argument('--ihc_suffix', type=list, default=['CK'])
+parser.add_argument('--transform_ori', type=str, default='IHC2HE')
+parser.add_argument('--ihc_ext', type=str, default='CK')
 if __name__ == '__main__':
     args = parser.parse_args()
     Registration(args).run()

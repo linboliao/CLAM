@@ -30,6 +30,7 @@ class PatchCoordsGenerator:
         self.max_RGB_diffs = opt.max_RGB_diffs
         self.fg_ratio = opt.fg_ratio
         self.skip_done = opt.skip_done
+        self.slide_list = opt.slide_list
 
         for directory in [self.slide_dir, self.coord_dir, self.mask_dir, self.stitch_dir]:
             if not os.path.exists(directory):
@@ -120,24 +121,27 @@ class PatchCoordsGenerator:
         df.loc[len(df)] = {'slide_id': slide, 'coord_num': coord_num}
         logger.info(f"Finished processing: {slide}")
 
-    def run(self):
-        # 获取源目录中的所有文件
+    @property
+    def slides(self):
+        if self.slide_list:
+            return self.slide_list
         slides = [f for f in os.listdir(self.slide_dir) if os.path.isfile(os.path.join(self.slide_dir, f))]
-        total_count = len(slides)
-        csv_path = os.path.join(self.count_dir, f'count.csv')
+        if self.skip_done:
+            total_count = len(slides)
+            slides_done = set(os.listdir(self.stitch_dir))
+            logger.info(f'{len(slides_done)}/{total_count} slides already done')
+            slides = [slide for slide in slides if slide.replace('svs', 'png') not in slides_done]
+        return slides
 
+    def run(self):
+        csv_path = os.path.join(self.count_dir, f'count.csv')
         if os.path.exists(csv_path):
             df = pd.read_csv(csv_path)
         else:
             df = pd.DataFrame(columns=['slide_id', 'coord_num'])
 
-        if self.skip_done:
-            slides_done = set(os.listdir(self.stitch_dir))
-            logger.info(f'{len(slides_done)}/{total_count} slides already done')
-            slides = [slide for slide in slides if slide.replace('svs', 'png') not in slides_done]
-
         with ThreadPoolExecutor(max_workers=12) as executor:
-            futures = [executor.submit(self.process_slide, slide, df) for slide in slides]
+            futures = [executor.submit(self.process_slide, slide, df) for slide in self.slides]
             for future in futures:
                 future.result()
         df.to_csv(csv_path, index=False)
@@ -145,12 +149,11 @@ class PatchCoordsGenerator:
 
 
 parser = BaseOptions().parse()
-parser.add_argument('--skip_done', type=bool, default=True)
+parser.add_argument('--skip_done', type=bool, default=False)
 parser.add_argument('--min_RGB', type=int, default=230, help='')
-parser.add_argument('--min_RGB_diffs', type=int, default=30, help='')
+parser.add_argument('--min_RGB_diffs', type=int, default=5, help='')
 parser.add_argument('--max_RGB_diffs', type=int, default=256, help='foreground RGB')
-parser.add_argument('--fg_ratio', type=float, default=0.3, help='threshold of foreground ratio')
-
+parser.add_argument('--fg_ratio', type=float, default=0.1, help='threshold of foreground ratio')
 if __name__ == '__main__':
     args = parser.parse_args()
     PatchCoordsGenerator(args).run()
