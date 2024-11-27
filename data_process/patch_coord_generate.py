@@ -28,9 +28,10 @@ class PatchCoordsGenerator:
         self.min_RGB = opt.min_RGB
         self.min_RGB_diffs = opt.min_RGB_diffs
         self.max_RGB_diffs = opt.max_RGB_diffs
-        self.fg_ratio = opt.fg_ratio
+        self.tissue_ratio = opt.tissue_ratio
         self.skip_done = opt.skip_done
         self.slide_list = opt.slide_list
+        self.overlap = opt.overlap
 
         for directory in [self.slide_dir, self.coord_dir, self.mask_dir, self.stitch_dir]:
             if not os.path.exists(directory):
@@ -59,11 +60,9 @@ class PatchCoordsGenerator:
         mask = np.zeros((h, w), dtype=np.uint8)
         stitch = np.zeros((h, w, 3), dtype=np.uint8)
         coords = []
-
-        for h_index in range(0, h - self.patch_size, self.patch_size):
-            if h_index < h // 10:
-                continue
-            for w_index in range(0, w - self.patch_size, self.patch_size):
+        step = int(self.patch_size * (1 - self.overlap))
+        for h_index in range(0, h - self.patch_size, step):
+            for w_index in range(0, w - self.patch_size, step):
                 patch = wsi.read_region((w_index, h_index), self.patch_level, (self.patch_size, self.patch_size))
                 patch = np.array(patch)
 
@@ -74,7 +73,7 @@ class PatchCoordsGenerator:
                         (difference < self.max_RGB_diffs)
 
                 # 检查组织占比
-                if np.sum(index) / (self.patch_size ** 2) >= self.fg_ratio:
+                if np.sum(index) / (self.patch_size ** 2) >= self.tissue_ratio:
                     coords.append([w_index, h_index])
 
                     cv2.rectangle(patch, (0, 0), (self.patch_size, self.patch_size), (0, 0, 0), 20)
@@ -85,8 +84,8 @@ class PatchCoordsGenerator:
                         cv2.line(patch, (0, -i * line_spacing), (self.patch_size, self.patch_size - i * line_spacing),
                                  (0, 0, 0), 5)
                 patch = cv2.cvtColor(patch, cv2.COLOR_BGR2RGB)
-                stitch[h_index:h_index + self.patch_size, w_index:w_index + self.patch_size] = patch
 
+                stitch[h_index:h_index + self.patch_size, w_index:w_index + self.patch_size] = patch
                 mask[h_index:h_index + self.patch_size, w_index:w_index + self.patch_size][index] = 255
 
         mask_path = os.path.join(self.mask_dir, f'{slide_name}.png')
@@ -151,9 +150,10 @@ class PatchCoordsGenerator:
 parser = BaseOptions().parse()
 parser.add_argument('--skip_done', type=bool, default=False)
 parser.add_argument('--min_RGB', type=int, default=230, help='')
-parser.add_argument('--min_RGB_diffs', type=int, default=5, help='')
-parser.add_argument('--max_RGB_diffs', type=int, default=256, help='foreground RGB')
-parser.add_argument('--fg_ratio', type=float, default=0.1, help='threshold of foreground ratio')
+parser.add_argument('--min_RGB_diffs', type=int, default=30, help='组织部分 rgb 最小差异值')
+parser.add_argument('--max_RGB_diffs', type=int, default=256, help='组织部分 rgb 最小差异值')
+parser.add_argument('--overlap', type=float, help='patch 重叠率')
+parser.add_argument('--tissue_ratio', type=float, default=0.3, help='组织占 patch 比重')
 if __name__ == '__main__':
     args = parser.parse_args()
     PatchCoordsGenerator(args).run()
