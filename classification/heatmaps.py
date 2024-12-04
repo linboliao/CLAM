@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from dataset_modules.dataset_generic import Generic_MIL_Dataset
 
-sys.path.append('/data2/yhhu/LLB/Code/aslide/')
+sys.path.append('/data2/lbliao/Code/aslide/')
 from aslide import Aslide
 
 
