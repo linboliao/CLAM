@@ -107,7 +107,7 @@ def train(datasets, cur, args):
 
     print('\nInit train/val/test splits...', end=' ')
     train_split, val_split, test_split = datasets
-    save_splits(datasets, ['train', 'val', 'test'], os.path.join(args.results_dir, 'splits_{}.csv'.format(cur)))
+    save_splits(datasets, ['train', 'val', 'test'], os.path.join(args.output_dir, 'splits_{}.csv'.format(cur)))
     print('Done!')
     print("Training on {} samples".format(len(train_split)))
     print("Validating on {} samples".format(len(val_split)))

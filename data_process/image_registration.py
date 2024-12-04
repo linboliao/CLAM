@@ -234,8 +234,8 @@ class Registration:
         img2.putalpha(self.alpha)
         for i, box in enumerate(boxes):
             sub_img = img2.crop(box)
-            canvas_img = img1 if i in [1, 3] else img1_copy
-            canvas_img.paste(sub_img, box, sub_img)
+            canvas = img1 if i in [1, 3] else img1_copy
+            canvas.paste(sub_img, box, sub_img)
 
         merged_image.paste(img1, (0, patch_size))
         merged_image.paste(img1_copy, (patch_size, patch_size))
@@ -300,8 +300,8 @@ class Registration:
             ihc_img_path = os.path.join(self.ihc_dir, f'{slide_name}_{coord[0]}_{coord[1]}.png')
             he_img.save(he_img_path, quality=50)
             ihc_img.save(ihc_img_path, quality=50)
-            logger.info(f'processed {i} / {len(he_points)} patch, progress {i / len(he_points):.4} % !!!')
-            if (i + 1) % (len(he_points) // 20) == 0 and self.check:
+            logger.info(f'processed {i} / {len(he_points)} patch, progress {i / len(he_points):.4} !!!')
+            if self.check and (i + 1) % (len(he_points) // 20) == 0:
                 save_path = os.path.join(self.regi_dir, f'{slide_name}-{self.ihc_ext}_{coord[0]}_{coord[1]}.png')
                 self.merge_show_img(he_img, ihc_img, save_path)
         logger.info(f'{slide} processed')
@@ -350,6 +350,8 @@ def run(source_dir, target_dir, output_dir, ag):
     tgt_img = os.listdir(target_dir)
     rg = Registration(ag)
     for img in src_img:
+        if img != '1547583.12_2457_7371.png':
+            continue
         base, _ = os.path.splitext(img)
         if not any([base in d for d in tgt_img]):
             continue
@@ -365,7 +367,8 @@ def run(source_dir, target_dir, output_dir, ag):
 parser = BaseOptions().parse()
 parser.add_argument('--alpha', type=int, default=100, help='')
 parser.add_argument('--check', type=bool, default=False)
-parser.add_argument('--ihc_ext', type=str)
+parser.add_argument('--ihc_ext', type=str, default='CK')
 if __name__ == '__main__':
     args = parser.parse_args()
-    Registration(args).run()
+    # Registration(args).run()
+    run('/data2/yhhu/LLB/Data/前列腺癌数据/CKPan/pair/4096/CK/ihc/', '/data2/yhhu/LLB/Data/前列腺癌数据/CKPan/pair/4096/CK/warped_source/', '/data2/yhhu/LLB/Data/前列腺癌数据/CKPan/check/reg/', args)
