@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 import torch
 import torch.nn.functional as F
+from torchvision.models.resnet import BasicBlock
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
            'resnet152']
@@ -14,6 +15,7 @@ model_urls = {
     'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
     'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
 }
+
 
 class Bottleneck_Baseline(nn.Module):
     expansion = 4
@@ -53,6 +55,7 @@ class Bottleneck_Baseline(nn.Module):
 
         return out
 
+
 class ResNet_Baseline(nn.Module):
 
     def __init__(self, block, layers):
@@ -66,8 +69,8 @@ class ResNet_Baseline(nn.Module):
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.avgpool = nn.AdaptiveAvgPool2d(1) 
-
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Identity()
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -104,8 +107,9 @@ class ResNet_Baseline(nn.Module):
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-
+        x = self.fc(x)
         return x
+
 
 def resnet50_baseline(pretrained=False):
     """Constructs a Modified ResNet-50 model.
@@ -117,9 +121,19 @@ def resnet50_baseline(pretrained=False):
         model = load_pretrained_weights(model, 'resnet50')
     return model
 
+
+def resnet18_baseline(pretrained=False):
+    """Constructs a Modified ResNet-50 model.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet_Baseline(BasicBlock, [2, 2, 2, 2])
+    if pretrained:
+        model = load_pretrained_weights(model, 'resnet18')
+    return model
+
+
 def load_pretrained_weights(model, name):
     pretrained_dict = model_zoo.load_url(model_urls[name])
     model.load_state_dict(pretrained_dict, strict=False)
     return model
-
-

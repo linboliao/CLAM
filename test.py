@@ -2,13 +2,13 @@
 #
 # import pandas as pd
 #
-# # dir = r'/data2/yhhu/LLB/Data/前列腺癌数据/CKPan/points/'
+# # dir = r'/data2/lbliao/Data/前列腺癌数据/CKPan/points/'
 # # json = os.listdir(dir)
 # # json = [f.replace('.json', '.kfb') for f in json if f.endswith('.json')]
 # # json = [f for f in json if '-CK' not in f]
 # # print(json)
 #
-# dir = r'/data2/yhhu/LLB/Data/前列腺癌数据/数据验证/slides/'
+# dir = r'/data2/lbliao/Data/前列腺癌数据/数据验证/slides/'
 # kfb = os.listdir(dir)
 # df = pd.DataFrame(columns=['slide_id', 'label'])
 # df[ 'slide_id'] = kfb
@@ -16,8 +16,8 @@
 # df.to_csv('test.csv')
 # import os
 #
-# he_dir = r'/data2/yhhu/LLB/Data/MSI/pair/1024/MSH6/trainA/'
-# ihc_dir = r'/data2/yhhu/LLB/Data/MSI/pair/1024/MSH6/trainB/'
+# he_dir = r'/data2/lbliao/Data/MSI/pair/1024/MSH6/trainA/'
+# ihc_dir = r'/data2/lbliao/Data/MSI/pair/1024/MSH6/trainB/'
 #
 #
 # # 遍历目录
@@ -35,8 +35,8 @@
 #             print(f"Deleted {filename} due to size less than 100KB")
 import os.path
 
-path = rf'/data2/yhhu/LLB/Data/前列腺癌数据/CKPan/slides/'
-ihc_path = rf'/data2/yhhu/LLB/Data/前列腺癌数据/CKPan/IHC/'
+path = rf'/data2/lbliao/Data/前列腺癌数据/CKPan/slides/'
+ihc_path = rf'/data2/lbliao/Data/前列腺癌数据/CKPan/IHC/'
 ls = ['1734281.11.kfb', '1547583.13.kfb', '1641996.7.kfb', '1641996.6.kfb', '1641996.11.kfb', '1641996.2.kfb', '1604701.16.kfb', '1641996.8.kfb', '1547583.14.kfb', '1638897.16.kfb', '1638897.13.kfb', '1638897.9.kfb', '1638897.15.kfb', '1636600.10.kfb', '1547583.20.kfb', '1641996.5.kfb', '1642001.1.kfb', '1547583.12.kfb', '1604701.12.kfb', '1638897.12.kfb', '1547583.10.kfb', '1641996.10.kfb', '1638897.19.kfb', '1547583.17.kfb', '1641996.4.kfb', '1547583.18.kfb', '1638897.11.kfb']
 for wsi in ls:
     ihc = wsi.replace('.kfb', '-CK.kfb')

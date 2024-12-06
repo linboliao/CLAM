@@ -9,8 +9,9 @@ from openslide import OpenSlide
 from loguru import logger
 
 from options.base_options import BaseOptions
+from utils.utils import param_log
 
-sys.path.append('/data2/yhhu/LLB/Code/aslide/')
+sys.path.append('/data2/lbliao/Code/aslide/')
 from aslide import Aslide
 
 
@@ -25,7 +26,7 @@ class PatchGenerate:
         self.patch_size = opt.patch_size
         self.patch_level = opt.patch_level
         self.slide_list = opt.slide_list
-
+        param_log(self)
         for directory in [self.slide_dir, self.coord_dir, self.patch_dir, self.coord_dir]:
             if not os.path.exists(directory):
                 os.makedirs(directory, exist_ok=True)

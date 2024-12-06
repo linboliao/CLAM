@@ -1,6 +1,7 @@
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
+import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
 import h5py
@@ -10,8 +11,9 @@ from loguru import logger
 from openslide import OpenSlide
 
 from options.base_options import BaseOptions
+from utils.utils import param_log
 
-sys.path.insert(0, r'/data2/yhhu/LLB/Code/aslide')
+sys.path.insert(0, r'/data2/lbliao/Code/aslide')
 from aslide import Aslide
 
 
@@ -33,6 +35,7 @@ class PatchCoordsGenerator:
         self.slide_list = opt.slide_list
         self.overlap = opt.overlap
 
+        param_log(self)
         for directory in [self.slide_dir, self.coord_dir, self.mask_dir, self.stitch_dir]:
             if not os.path.exists(directory):
                 os.makedirs(directory, exist_ok=True)
@@ -141,18 +144,21 @@ class PatchCoordsGenerator:
 
         with ThreadPoolExecutor(max_workers=12) as executor:
             futures = [executor.submit(self.process_slide, slide, df) for slide in self.slides]
-            for future in futures:
-                future.result()
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception:
+                    traceback.print_exc()
         df.to_csv(csv_path, index=False)
         logger.info(f"CSV file created at {csv_path}")
 
 
 parser = BaseOptions().parse()
-parser.add_argument('--skip_done', type=bool, default=False)
+parser.add_argument('--skip_done', type=bool, default=True)
 parser.add_argument('--min_RGB', type=int, default=230, help='')
 parser.add_argument('--min_RGB_diffs', type=int, default=30, help='组织部分 rgb 最小差异值')
 parser.add_argument('--max_RGB_diffs', type=int, default=256, help='组织部分 rgb 最小差异值')
-parser.add_argument('--overlap', type=float, help='patch 重叠率')
+parser.add_argument('--overlap', type=float, default=0, help='patch 重叠率')
 parser.add_argument('--tissue_ratio', type=float, default=0.3, help='组织占 patch 比重')
 if __name__ == '__main__':
     args = parser.parse_args()

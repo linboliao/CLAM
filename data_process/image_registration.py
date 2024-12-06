@@ -16,8 +16,9 @@ from skimage import transform
 from sklearn.model_selection import train_test_split
 
 from options.base_options import BaseOptions
+from utils.utils import param_log
 
-sys.path.insert(0, r'/data2/yhhu/LLB/Code/aslide')
+sys.path.insert(0, r'/data2/lbliao/Code/aslide')
 from aslide import Aslide
 
 
@@ -161,6 +162,7 @@ class Registration:
         self.alpha = opt.alpha
         self.slide_list = opt.slide_list
 
+        param_log(self)
         for directory in [self.slide_dir, self.coord_dir, self.pair_dir, self.coord_dir, self.points_dir, self.transform_dir, self.he_dir, self.ihc_dir, self.regi_dir]:
             os.makedirs(directory, exist_ok=True)
 
@@ -370,5 +372,5 @@ parser.add_argument('--check', type=bool, default=False)
 parser.add_argument('--ihc_ext', type=str, default='CK')
 if __name__ == '__main__':
     args = parser.parse_args()
-    # Registration(args).run()
-    run('/data2/yhhu/LLB/Data/前列腺癌数据/CKPan/pair/4096/CK/ihc/', '/data2/yhhu/LLB/Data/前列腺癌数据/CKPan/pair/4096/CK/warped_source/', '/data2/yhhu/LLB/Data/前列腺癌数据/CKPan/check/reg/', args)
+    Registration(args).run()
+    # run('/data2/lbliao/Data/前列腺癌数据/CKPan/pair/4096/CK/ihc/', '/data2/lbliao/Data/前列腺癌数据/CKPan/pair/4096/CK/warped_source/', '/data2/lbliao/Data/前列腺癌数据/CKPan/check/reg/', args)

@@ -7,16 +7,22 @@ import numpy as np
 import openslide
 import torch
 import torch.nn as nn
+import torchvision
 from loguru import logger
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from dataset_modules.dataset_h5 import DatasetAllBags, WholeSlideBagFp
 from models import get_encoder
+from models.resnet_custom_dep import resnet18_baseline, resnet50_baseline
 from options.base_options import BaseOptions
+from options.train_options import TrainOptions
+from utils.constants import MODEL2CONSTANTS
 from utils.file_utils import save_hdf5
+from utils.transform_utils import get_eval_transforms
+from utils.utils import param_log
 
-sys.path.append('/data2/yhhu/LLB/Code/aslide/')
+sys.path.append('/data2/lbliao/Code/aslide/')
 from aslide import Aslide
 
 
@@ -30,9 +36,10 @@ class ExtractFeaturesFP:
 
         self.model_name = opt.feat_model
         self.batch_size = opt.batch_size
-        self.device = torch.device(f'cuda:{opt.gpu_id}') if torch.cuda.is_available() else torch.device('cpu')
+        self.device = torch.device(f'cuda:{opt.gpus}') if torch.cuda.is_available() else torch.device('cpu')
         self.skip_done = opt.skip_done
 
+        param_log(self)
         os.makedirs(self.feat_dir, exist_ok=True)
         os.makedirs(os.path.join(self.feat_dir, 'pt_files'), exist_ok=True)
         os.makedirs(os.path.join(self.feat_dir, 'h5_files'), exist_ok=True)
@@ -63,9 +70,52 @@ class ExtractFeaturesFP:
 
         return output_path
 
+    def load_simclr_pretrained_model(self, model, simclr_save_path):
+        # add mlp projection head
+        dim_mlp = model.fc.in_features
+        model.fc = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), model.fc)
+        # load simclr pretrained model parameters
+        simclr_saved = torch.load(simclr_save_path)
+        state_dict = {}
+        for key, value in simclr_saved['state_dict'].items():
+            new_key = key.replace("backbone.", "")
+            state_dict[new_key] = value
+        model.load_state_dict(state_dict)
+        print('load simclr pretrained model successfully.')
+        model.fc = nn.Identity()
+
+        return model
+
+    def get_model(self):
+        if self.model_name == 'resnet18_256':
+            model = resnet18_baseline(pretrained=True)
+        elif self.model_name == 'resnet50_1024':
+            model = resnet50_baseline(pretrained=True)
+        elif self.model_name == 'resnet18_512':
+            model = torchvision.models.resnet18(pretrained=True)
+            model.fc = nn.Identity()
+        elif self.model_name == 'resnet50_2048':
+            model = torchvision.models.resnet50(pretrained=True)
+            model.fc = nn.Identity()
+        elif self.model_name == 'simclr_resnet18_512':
+            model = torchvision.models.resnet18(pretrained=False, num_classes=128)
+            self.load_simclr_pretrained_model(model, args.simclr_save_path)
+        elif self.model_name == 'simclr_resnet50_1024':
+            model = resnet50_baseline(pretrained=False)
+            model.fc = nn.Linear(1024, 128)
+            self.load_simclr_pretrained_model(model, args.simclr_save_path)
+        elif self.model_name == 'simclr_resnet50_2048':
+            model = torchvision.models.resnet50(pretrained=False, num_classes=128)
+            self.load_simclr_pretrained_model(model, args.simclr_save_path)
+            model.fc = nn.Identity()
+        return model.to(self.device)
+
     def extract(self):
         bags_dataset = DatasetAllBags(self.count_path)
-        model, img_transforms = get_encoder(self.model_name)
+        constants = MODEL2CONSTANTS['resnet50_trunc']
+        img_transforms = get_eval_transforms(mean=constants['mean'], std=constants['std'], target_img_size=500)
+        # model, img_transforms = get_encoder(self.model_name)
+        model = self.get_model()
         model.eval()
         model = model.to(self.device)
         total = len(bags_dataset)
@@ -104,12 +154,9 @@ class ExtractFeaturesFP:
             torch.save(features, os.path.join(self.feat_dir, 'pt_files', bag_base + '.pt'))
 
 
-parser = BaseOptions().parse()
-parser.add_argument('--gpu_id', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
-parser.add_argument('--batch_size', type=int, default=256)
+parser = TrainOptions().parse()
 parser.add_argument('--skip_done', type=bool, default=True)
 parser.add_argument('--feat_dir', type=str)
-parser.add_argument('--feat_model', type=str, default='uni_v1', help="{resnet50_trunc、uni_v1、conch_v1}")
 
 if __name__ == '__main__':
     args = parser.parse_args()

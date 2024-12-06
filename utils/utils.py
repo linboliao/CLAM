@@ -7,6 +7,7 @@ import pdb
 import torch
 import numpy as np
 import torch.nn as nn
+from loguru import logger
 from torchvision import transforms
 from torch.utils.data import DataLoader, Sampler, WeightedRandomSampler, RandomSampler, SequentialSampler, sampler
 import torch.optim as optim
@@ -164,3 +165,9 @@ def initialize_weights(module):
 			nn.init.constant_(m.weight, 1)
 			nn.init.constant_(m.bias, 0)
 
+def param_log(obj):
+	# 打印参数
+	for attr in dir(obj):
+		attr_value = getattr(obj, attr)
+		if not callable(attr_value) and not attr.startswith("__"):
+			logger.info(f"args：{attr}: {attr_value}")
