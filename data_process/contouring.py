@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import pathlib
 import re
 import traceback
 import uuid
@@ -16,79 +17,30 @@ from options.base_options import BaseOptions
 from utils.utils import param_log
 
 
-def get_coords():
-    full_path = os.path.join('/data2/lbliao/Data/前列腺癌数据/CKPan/patch/1024/tmp_coord/', '1547583.10.h5')
-    with h5py.File(full_path, 'r') as hdf5_file:
-        coords = hdf5_file['coords'][:]
-    return coords
+class BaseContour:
+    def __init__(self, options):
+        self.slide_dir = options.slide_dir if options.slide_dir else os.path.join(options.data_root, 'slides')
+        self.patch_dir = options.patch_dir if options.patch_dir else os.path.join(options.data_root, f'patch/{options.patch_size}/image')
+        self.contour_dir = options.contour_dir if options.contour_dir else os.path.join(options.data_root, f'patch/{options.patch_size}/contour')
+        self.ihc_slide_dir = os.path.join(options.data_root, 'IHC')
+        self.points_dir = os.path.join(options.data_root, f'points')
+        self.patch_size = options.patch_size
+        self.ihc_ext = options.ihc_ext
+        self.slide_list = options.slide_list
 
-
-class Contour:
-    def __init__(self, opt):
-        self.slide_dir = opt.slide_dir if opt.slide_dir else os.path.join(opt.data_root, 'slides')
-        self.patch_dir = opt.patch_dir if opt.patch_dir else os.path.join(opt.data_root, f'patch/{opt.patch_size}/image')
-        self.contour_dir = opt.contour_dir if opt.contour_dir else os.path.join(opt.data_root, f'patch/{opt.patch_size}/contour')
-        self.transform_dir = opt.transform_dir if opt.transform_dir else os.path.join(opt.data_root, f'transform')
-        self.transform = opt.transform
-        self.transform_ori = opt.transform_ori
-        self.patch_size = opt.patch_size
-        self.ihc_ext = opt.ihc_ext
-        self.slide_list = opt.slide_list
+        self.skip_done = options.skip_done
 
         param_log(self)
-        for directory in [self.patch_dir, self.contour_dir, self.transform_dir]:
+        for directory in [self.patch_dir, self.contour_dir]:
             os.makedirs(directory, exist_ok=True)
 
-    def contour(self, slide):
-        slide_name = os.path.splitext(slide)[0]
-        logger.info(f'start to process {slide_name}')
-        # patches = os.listdir(self.patch_dir)
-        coords = get_coords()
-        patches = [f'{slide_name}_{coord[0]}_{coord[1]}.jpg' for coord in coords]
-        features = []
-        affine_features = []
-        for patch in patches:
-            if not patch.startswith(f'{slide_name}') or not os.path.exists(os.path.join(self.patch_dir, patch)):
-                continue
-            cnt_info = self.get_contours(patch)
-            f, af = self.get_features(cnt_info, patch, slide_name, {"name": "cancer", "color": [255, 0, 0]})
-            if f:
-                features.extend(f)
-            if af:
-                affine_features.extend(af)
-        new_patches = os.listdir(self.patch_dir)
-        new_patches = [patch for patch in new_patches if patch not in patches]
-        for patch in new_patches:
-            if not patch.startswith(f'{slide_name}') or not os.path.exists(os.path.join(self.patch_dir, patch)):
-                continue
-            cnt_info = self.get_contours(patch)
-            f, af = self.get_features(cnt_info, patch, slide_name, {"name": "non-cancer", "color": [0, 255, 0]})
-            if f:
-                features.extend(f)
-            if af:
-                affine_features.extend(af)
+    def run(self, slide):
+        raise NotImplementedError
 
-        geojson = {
-            "type": "FeatureCollection",
-            "features": features
-        }
-
-        with open(os.path.join(self.contour_dir, f'{slide_name}.geojson'), 'w') as f:
-            json.dump(geojson, f, indent=2)
-            logger.info(f'generated {slide_name}.geojson contour json!!!')
-        if self.transform:
-            affine_geojson = {
-                "type": "FeatureCollection",
-                "features": affine_features
-            }
-            with open(os.path.join(self.contour_dir, f"{slide_name.replace(f'-{self.ihc_ext}', '')}.geojson"), 'w') as f:
-                json.dump(affine_geojson, f, indent=2)
-
-            logger.info(f'generated {slide_name.replace(f"-{self.ihc_ext}", "")}.geojson contour json!!!')
-
-    def get_contours(self, patch: str):
-        lower_bound = np.array([15, 15, 30])
-        upper_bound = np.array([140, 140, 160])
+    def cv_contour(self, patch: str | pathlib.Path):
+        # 根据色彩范围，使用 opencv 框出目标
+        lower_bound = np.array([5, 5, 10])
+        upper_bound = np.array([220, 220, 185])
 
         image_path = os.path.join(self.patch_dir, patch)
         image = cv2.imread(image_path)
@@ -102,92 +54,149 @@ class Contour:
         cnt_info = cv2.findContours(dark_region, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         return cnt_info
 
-    def get_features(self, cnt_info, patch, slide_name, clazz):
+    def qupath_feature(self, cnt_info, patch):
+        # 获取 qupath 格式数据
         match = re.search(r'_(\d+)_(\d+)\.jpg', patch)
         x_str, y_str = match.groups()
         x, y = int(x_str), int(y_str)
         contours, hierarchy = cnt_info
         features = []
-        affine_features = []
+
         for cnt, h in zip(contours, hierarchy[0]):
-            epsilon = 0.0005 * cv2.arcLength(cnt, True)
-            cnt = cv2.approxPolyDP(cnt, epsilon, True)
             area = cv2.contourArea(cnt)
             patch_area = (self.patch_size - 1) ** 2
             parent_area = cv2.contourArea(contours[h[3]]) if h[3] != -1 else float('inf')
 
             # 存在父contour 且 父contour不为整张图的  且 父contour面积远大于子contour 且 子contour面积很小
-            if patch_area // 200 < area < patch_area and not (h[3] != -1 and parent_area < patch_area and area < parent_area // 4):
-                # hull = cv2.convexHull(cnt, returnPoints=False)
-                # defects = cv2.convexityDefects(cnt, hull)
-                # for i in range(defects.shape[0]):
-                #     start, end, far, depth = defects[i, 0]
-                #     cnt = np.vstack((cnt[:start], cnt[end + 1:]))
-                for _ in range(3):
-                    start = 0
-                    while start < len(cnt):
-                        start_point = cnt[start][0]
-                        for i, end_point in enumerate(cnt[start + 3: start + 25]):
-                            end_point = end_point[0]
-                            if math.sqrt((start_point[0] - end_point[0]) ** 2 + (start_point[1] - end_point[1]) ** 2) < 4:
-                                cnt = np.vstack((cnt[:start], cnt[start + i:]))
-                                break
-                        start += 1
+            if patch_area // 6000 < area < patch_area and not (h[3] != -1 and parent_area < patch_area and area < parent_area // 200):
+
+                # 轮廓平滑 CV2 的平滑太锐利了
+                start = 0
+                while start < len(cnt):
+                    start_point = cnt[start][0]
+                    for i, end_point in enumerate(cnt[start + 5: start + 25]):
+                        end_point = end_point[0]
+                        if math.sqrt((start_point[0] - end_point[0]) ** 2 + (start_point[1] - end_point[1]) ** 2) < 25:
+                            cnt = np.vstack((cnt[:start], cnt[start + i + 5:]))
+                            break
+                    start += 1
 
                 cnt += np.array([x - 3, y - 3])
                 cnt = cnt.reshape((-1, 2))
                 cnt = cnt.tolist()
                 cnt.append(cnt[0])
 
-                if self.transform:
-                    with open(os.path.join(self.transform_dir, f'{slide_name}.json'), 'r') as f:
-                        reg_params = json.load(f)
-                    # TODO 一个 HE 对应多个 IHC
-                    a, b, c, d, e, f = reg_params[f'{slide_name}.svs']
-                    affine_cnt = affine_transform(cnt, a, b, c, d, e, f)
-                    affine_cnt = np.reshape(affine_cnt, (len(affine_cnt) // 2, 2))
-                    affine_cnt = np.round(affine_cnt)
-                    affine_feature = {
+                if len(cnt) > 3:
+                    feature = {
                         "type": "Feature",
                         "id": str(uuid.uuid4()),
                         "geometry": {
                             "type": "Polygon",
-                            "coordinates": [affine_cnt.tolist()]
+                            "coordinates": [cnt],
                         }
                     }
-                    affine_features.append(affine_feature)
-                if len(cnt) < 3:
-                    continue
-                feature = {
-                    "type": "Feature",
-                    "id": str(uuid.uuid4()),
-                    "geometry": {
-                        "type": "Polygon",
-                        "coordinates": [cnt],
-                    },
-                    "properties": {
-                        "objectType": "annotation",
-                        "classification": clazz
-                    }
-                }
-                features.append(feature)
-        return features, affine_features
+                    features.append(feature)
+        return features
 
     @property
     def slides(self):
         if self.slide_list:
-            return self.slide_list
+            slides = self.slide_list
         else:
-            return [file for file in os.listdir(self.slide_dir) if self.ihc_ext in file]
+            slides = [f for f in os.listdir(self.slide_dir) if os.path.isfile(os.path.join(self.slide_dir, f))]
+        if True:
+            points = [os.path.splitext(p)[0] for p in os.listdir(self.points_dir)]
+            ihc_wsi = [os.path.splitext(p)[0] for p in os.listdir(self.ihc_slide_dir)]
+            slides = [slide for slide in slides if f'{os.path.splitext(slide)[0]}-{self.ihc_ext}' in ihc_wsi]  # 过滤无配对数据
+            slides = [slide for slide in slides if os.path.splitext(slide)[0] in points]  # 过滤无标点数据
+        return slides
 
-    def run(self):
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [executor.submit(self.contour, slide) for slide in self.slides]
+    def parallel_run(self):
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = [executor.submit(self.run, slide) for slide in self.slides]
             for future in as_completed(futures):
                 try:
                     future.result()
                 except Exception:
                     traceback.print_exc()
+
+
+class HeatmapContour(BaseContour):
+    def __init__(self, options):
+        super().__init__(options)
+        self.heatmap_coord_dir = options.heatmap_coord_dir if options.heatmap_coord_dir else os.path.join(options.data_root, f'patch/{options.patch_size}/heatmap_coord')
+
+    def heatmap_coords(self, slide):
+        slide_id, _ = os.path.splitext(slide)
+        full_path = os.path.join(self.heatmap_coord_dir, f'{slide_id}.h5')
+        with h5py.File(full_path, 'r') as hdf5_file:
+            coords = hdf5_file['coords'][:]
+        return coords
+
+    def run(self, slide):
+        slide_name = os.path.splitext(slide)[0]
+        logger.info(f'start to process {slide_name}')
+        features = []
+        patches = os.listdir(self.patch_dir)
+        for patch in patches:
+            if not patch.startswith(f'{slide_name}') or not os.path.exists(os.path.join(self.patch_dir, patch)):
+                continue
+            cnt_info = self.cv_contour(patch)
+            features = self.qupath_feature(cnt_info, patch)
+        features = self.heatmap_judge(features, slide)
+
+        geojson = {"type": "FeatureCollection", "features": features}
+        with open(os.path.join(self.contour_dir, f'{slide_name}.geojson'), 'w') as f:
+            json.dump(geojson, f, indent=2)
+            logger.info(f'generated {slide_name}.geojson contour json!!!')
+
+    def heatmap_judge(self, features, slide):
+        # 根据热力值判断有癌无癌
+        h_coords = self.heatmap_coords(slide)
+
+        for feature in features:
+            coords = feature.get('geometry').get('coordinates')
+            for h_coord in h_coords:
+                w, h = h_coord[0], h_coord[1]
+                count = 0
+                for coord in coords[0]:
+                    if w < coord[0] < w + 256 and h < coord[1] < h + 256:
+                        count += 1
+                if count > 0:
+                    feature.update({"properties": {
+                        "objectType": "annotation",
+                        "classification": {"name": "cancer", "color": [255, 0, 0]}
+                    }})
+                    break
+                else:
+                    feature.update({"properties": {
+                        "objectType": "annotation",
+                        "classification": {"name": "non-cancer", "color": [0, 255, 0]}
+                    }})
+        return features
+
+
+class PatchContour(BaseContour):
+    def run(self, slide):
+        slide_name = os.path.splitext(slide)[0]
+        logger.info(f'start to process {slide_name}')
+        features = []
+        patches = os.listdir(self.patch_dir)
+
+        for patch in patches:
+            if not patch.startswith(f'{slide_name}') or not os.path.exists(os.path.join(self.patch_dir, patch)):
+                continue
+            cnt_info = self.cv_contour(patch)
+            feature = self.qupath_feature(cnt_info, patch)
+            features.extend(feature)
+
+        geojson = {
+            "type": "FeatureCollection",
+            "features": features
+        }
+        with open(os.path.join(self.contour_dir, f'{slide_name}.geojson'), 'w') as f:
+            json.dump(geojson, f, indent=2)
+            logger.info(f'generated {slide_name}.geojson contour json!!!')
 
 
 parser = BaseOptions().parse()
@@ -198,4 +207,4 @@ parser.add_argument('--transform_ori', type=str, default='IHC2HE')
 parser.add_argument('--ihc_ext', type=str, default='CK')
 if __name__ == '__main__':
     args = parser.parse_args()
-    Contour(args).run()
+    PatchContour(args).parallel_run()

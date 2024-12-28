@@ -35,10 +35,10 @@ class PatchCoordsGenerator:
         self.slide_list = opt.slide_list
         self.overlap = opt.overlap
 
-        param_log(self)
         for directory in [self.slide_dir, self.coord_dir, self.mask_dir, self.stitch_dir]:
             if not os.path.exists(directory):
                 os.makedirs(directory, exist_ok=True)
+        param_log(self)
 
     def save_hdf5(self, slide_name, coords, attr):
         coord_path = os.path.join(self.coord_dir, f'{slide_name}.h5')
@@ -142,7 +142,7 @@ class PatchCoordsGenerator:
         else:
             df = pd.DataFrame(columns=['slide_id', 'coord_num'])
 
-        with ThreadPoolExecutor(max_workers=12) as executor:
+        with ThreadPoolExecutor(max_workers=8) as executor:
             futures = [executor.submit(self.process_slide, slide, df) for slide in self.slides]
             for future in as_completed(futures):
                 try:
@@ -154,7 +154,7 @@ class PatchCoordsGenerator:
 
 
 parser = BaseOptions().parse()
-parser.add_argument('--skip_done', type=bool, default=True)
+parser.add_argument('--skip_done', action='store_true', help='skip processing slides')
 parser.add_argument('--min_RGB', type=int, default=230, help='')
 parser.add_argument('--min_RGB_diffs', type=int, default=30, help='组织部分 rgb 最小差异值')
 parser.add_argument('--max_RGB_diffs', type=int, default=256, help='组织部分 rgb 最小差异值')

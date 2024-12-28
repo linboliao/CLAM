@@ -14,10 +14,12 @@ from matplotlib import pyplot as plt
 from scipy.optimize import curve_fit
 from skimage import transform
 from sklearn.model_selection import train_test_split
+from tqdm import tqdm
 
 from options.base_options import BaseOptions
 from utils.utils import param_log
 
+Image.MAX_IMAGE_PIXELS = None
 sys.path.insert(0, r'/data2/lbliao/Code/aslide')
 from aslide import Aslide
 
@@ -154,6 +156,7 @@ class Registration:
         self.he_dir = os.path.join(opt.data_root, f'pair/{opt.patch_size}/{opt.ihc_ext}/he')
         self.ihc_dir = os.path.join(opt.data_root, f'pair/{opt.patch_size}/{opt.ihc_ext}/ihc')
         self.regi_dir = os.path.join(opt.data_root, f'check/{opt.patch_size}')
+        self.skip_done = opt.skip_done
 
         self.patch_size = opt.patch_size
         self.patch_level = opt.patch_level
@@ -186,19 +189,17 @@ class Registration:
         width, height = wsi.level_dimensions[0]
         center_x = int(np.mean(corners[:, 0]))
         center_y = int(np.mean(corners[:, 1]))
+        if center_x > width or center_x < 0 or center_y > height or center_y < 0:
+            return None, None
 
-        # Calculate the boundaries of the crop region
-        half_crop = self.patch_size
-        top = max(0, center_y - half_crop)
-        bottom = min(height, center_y + half_crop)
-        left = max(0, center_x - half_crop)
-        right = min(width, center_x + half_crop)
+        patch_size = self.patch_size
+        top, left, bottom, right = max(0, center_y - patch_size), max(0, center_x - patch_size), min(height, center_y + patch_size), min(width, center_x + patch_size)
+        wsi_image = wsi.read_region((left, top), self.patch_level, (min(width - left, 2 * patch_size), min(height - top, 2 * patch_size)))
 
-        wsi_image = wsi.read_region((left, top), self.patch_level, (2 * self.patch_size, 2 * self.patch_size))
         if isinstance(wsi_image, np.ndarray):
             wsi_image = Image.fromarray(wsi_image)
-        cropped_image = wsi_image.crop((0, 0, right - left, bottom - top))
-        # Adjust the corner points to the cropped image
+
+        cropped_image = wsi_image.crop((0, 0, min(right - left, 2 * patch_size), min(bottom - top, 2 * patch_size)))
         adjusted_corners = corners.copy()
         adjusted_corners[:, 0] -= left
         adjusted_corners[:, 1] -= top
@@ -236,7 +237,7 @@ class Registration:
         img2.putalpha(self.alpha)
         for i, box in enumerate(boxes):
             sub_img = img2.crop(box)
-            canvas = img1 if i in [1, 3] else img1_copy
+            canvas = img1 if i in [1, 2] else img1_copy
             canvas.paste(sub_img, box, sub_img)
 
         merged_image.paste(img1, (0, patch_size))
@@ -248,6 +249,7 @@ class Registration:
             x = i * w // 2
             ImageDraw.Draw(merged_image).line([(x, 0), (x, h)], fill='black', width=5)
 
+        # 纵向、横向分隔线
         for x in range(0, w, 10):
             for y in [h // 4 * 3]:
                 ImageDraw.Draw(merged_image).point((x, y), fill='black')
@@ -266,14 +268,15 @@ class Registration:
 
         (a, b, c, d, e, f) = self.get_reg_param(slide_name)
 
-        file = h5py.File(os.path.join(self.coord_dir, f'{slide_name}.h5'), mode='r')
-        he_points = list(file['coords'][:])
-
+        # file = h5py.File(os.path.join(self.coord_dir, f'{slide_name}.h5'), mode='r')
+        # he_points = list(file['coords'][:])
+        he_points = get_points_from_txt(os.path.join(self.points_dir, f'{slide_name}.txt'))
         he_path = os.path.join(self.slide_dir, slide)
         he_wsi = Aslide(he_path) if '.kfb' in slide else openslide.OpenSlide(he_path)
         ihc_path = os.path.join(self.ihc_slide_dir, f'{slide_name}-{self.ihc_ext}{slide_ext}')
         ihc_wsi = Aslide(ihc_path) if '.kfb' in slide else openslide.OpenSlide(ihc_path)
 
+        # 存储配准点效果图片
         if self.check:
             for coord in he_points:
                 he_img = he_wsi.read_region(coord, self.patch_level, (self.patch_size, self.patch_size))
@@ -286,8 +289,7 @@ class Registration:
                 save_path = os.path.join(self.regi_dir, f'{slide_name}-{self.ihc_ext}_{coord[0]}_{coord[1]}.png')
                 self.merge_show_img(he_img, dst_img, save_path)
 
-        (w, h) = he_wsi.level_dimensions[self.patch_level]
-        for i, coord in enumerate(he_points):
+        for i, coord in enumerate(tqdm(he_points)):
             coord = (int(coord[0]), int(coord[1]))
 
             he_img = he_wsi.read_region(coord, self.patch_level, (self.patch_size, self.patch_size))
@@ -296,13 +298,15 @@ class Registration:
             ihc_points = affine_transform(get_square_corner_points(coord, self.patch_size), a, b, c, d, e, f)
             ihc_points = np.reshape(ihc_points, (len(ihc_points) // 2, 2))
             cropped_img, corner_points = self.crop_image_and_adjust_corners(ihc_wsi, ihc_points)
+            if not cropped_img:
+                continue
             ihc_img = warp_image_to_square(cropped_img, corner_points, self.patch_size)
 
             he_img_path = os.path.join(self.he_dir, f'{slide_name}_{coord[0]}_{coord[1]}.png')
             ihc_img_path = os.path.join(self.ihc_dir, f'{slide_name}_{coord[0]}_{coord[1]}.png')
             he_img.save(he_img_path, quality=50)
             ihc_img.save(ihc_img_path, quality=50)
-            logger.info(f'processed {i} / {len(he_points)} patch, progress {i / len(he_points):.4} !!!')
+
             if self.check and (i + 1) % (len(he_points) // 20) == 0:
                 save_path = os.path.join(self.regi_dir, f'{slide_name}-{self.ihc_ext}_{coord[0]}_{coord[1]}.png')
                 self.merge_show_img(he_img, ihc_img, save_path)
@@ -311,16 +315,18 @@ class Registration:
     @property
     def slides(self):
         if self.slide_list:
-            return self.slide_list
+            slides = self.slide_list
         else:
             slides = [f for f in os.listdir(self.slide_dir) if os.path.isfile(os.path.join(self.slide_dir, f))]
-            # slides = [slide for slide in slides if not any(s in slide for s in self.ihc_ext)]
-            # TODO 判断配准点是否存在; 目前还没有统一配准点的格式 geojson 和 json
-            points = os.listdir(self.points_dir)
-            return [slide for slide in slides if any(os.path.splitext(slide)[0] in pt for pt in points)]
+
+        points = [os.path.splitext(p)[0] for p in os.listdir(self.points_dir)]
+        ihc_wsi = [os.path.splitext(p)[0] for p in os.listdir(self.ihc_slide_dir)]
+        slides = [slide for slide in slides if f'{os.path.splitext(slide)[0]}-{self.ihc_ext}' in ihc_wsi]  # 过滤无配对数据
+        slides = [slide for slide in slides if os.path.splitext(slide)[0] in points]  # 过滤无标点数据
+        return slides
 
     def run(self):
-        with ThreadPoolExecutor(max_workers=16) as executor:
+        with ThreadPoolExecutor(max_workers=12) as executor:
             futures = [executor.submit(self.registration, slide) for slide in self.slides]
             for future in as_completed(futures):
                 try:
@@ -328,49 +334,116 @@ class Registration:
                 except Exception:
                     traceback.print_exc()
 
-    def split_data(self):
-        train_a_dir = os.path.join(self.pair_dir, f'{self.ihc_ext}/trainA')
-        train_b_dir = os.path.join(self.pair_dir, f'{self.ihc_ext}/trainB')
-        test_a_dir = os.path.join(self.pair_dir, f'{self.ihc_ext}/testA')
-        test_b_dir = os.path.join(self.pair_dir, f'{self.ihc_ext}/testB')
-        for directory in [train_a_dir, train_b_dir, test_a_dir, test_b_dir]:
-            os.makedirs(directory, exist_ok=True)
 
-        images = os.listdir(self.he_dir)
-        train_set, test_set = train_test_split(images, test_size=0.2, random_state=42)
-        for img in train_set:
-            shutil.copy(os.path.join(self.he_dir, img), os.path.join(train_a_dir, img))
-            shutil.copy(os.path.join(self.ihc_dir, img), os.path.join(train_b_dir, img))
+class FilterRegistration(Registration):
+    def __init__(self, opt):
+        super().__init__(opt)
+        self.overlap = opt.overlap
 
-        for img in test_set:
-            shutil.copy(os.path.join(self.he_dir, img), os.path.join(test_a_dir, img))
-            shutil.copy(os.path.join(self.ihc_dir, img), os.path.join(test_b_dir, img))
+    @staticmethod
+    def is_background(img, threshold=5):
+        img_array = np.array(img)
+        pixel_max = np.max(img_array, axis=2)
+        pixel_min = np.min(img_array, axis=2)
+        difference = pixel_max - pixel_min
+        tissue_percent = np.sum(difference > threshold) / (img_array.shape[0] * img_array.shape[1])
+
+        return tissue_percent < 0.05
+
+    def registration(self, slide):
+        target_patch_size = 10000
+        slide_name, slide_ext = os.path.splitext(slide)
+
+        (a, b, c, d, e, f) = self.get_reg_param(slide_name)
+        he_path = os.path.join(self.slide_dir, slide)
+        he_wsi = Aslide(he_path) if '.kfb' in slide else openslide.OpenSlide(he_path)
+        ihc_path = os.path.join(self.ihc_slide_dir, f'{slide_name}-{self.ihc_ext}{slide_ext}')
+        ihc_wsi = Aslide(ihc_path) if '.kfb' in slide else openslide.OpenSlide(ihc_path)
+
+        [w, h] = he_wsi.level_dimensions[self.patch_level]
+        logger.info(f'start to process {slide}, ihc_ext {self.ihc_ext} {slide} width {w} height {h}')
+
+        for h_s in range(0, h, target_patch_size):
+            for w_s in range(0, w, target_patch_size):
+                hc_img_path = os.path.join(self.ihc_dir, f'{slide_name}_{w_s}_{h_s}.png')
+                if self.skip_done and os.path.isfile(hc_img_path):
+                    continue
+
+                canvas = np.full([target_patch_size, target_patch_size, 3], (255, 255, 255), dtype=np.uint8)
+                step = int(self.patch_size * (1 - self.overlap))
+                for h_i in range(0, target_patch_size, step):
+                    if h - h_s - h_i <= 0:
+                        continue
+                    for w_i in range(0, target_patch_size, step):
+                        if w - w_s - w_i <= 0:
+                            continue
+
+                        he_img = he_wsi.read_region((w_i + w_s, h_i + h_s), self.patch_level, (min(self.patch_size, w - w_s - w_i), min(self.patch_size, h - h_s - h_i)))
+                        if isinstance(he_img, Image.Image):
+                            he_img = he_img.convert('RGB')
+
+                        h_step = min(min(self.patch_size, target_patch_size - h_i), h - h_s - h_i)
+                        w_step = min(min(self.patch_size, target_patch_size - w_i), w - w_s - w_i)
+
+                        if self.is_background(he_img):
+                            canvas[h_i:h_i + h_step, w_i:w_i + w_step] = np.array(he_img)[0:h_step, 0:w_step]
+                        else:
+                            dst_points = affine_transform(get_square_corner_points((w_i + w_s, h_i + h_s), self.patch_size), a, b, c, d, e, f)
+                            dst_points = np.reshape(dst_points, (len(dst_points) // 2, 2))
+                            cropped_img, corner_points = self.crop_image_and_adjust_corners(ihc_wsi, dst_points)
+                            if not cropped_img:
+                                continue
+                            dst_img = warp_image_to_square(cropped_img, corner_points, self.patch_size)
+                            if isinstance(dst_img, Image.Image):
+                                dst_img = dst_img.convert('RGB')
+                                dst_img = np.array(dst_img)
+                            if self.overlap > 0:
+                                dst_patch = canvas[h_i:h_i + h_step, w_i:w_i + w_step]
+                                index_overlap = np.where(dst_patch != 255)
+                                dst_img[index_overlap] = dst_img[index_overlap] * 0.5 + dst_patch[index_overlap] * 0.5
+                            canvas[h_i:h_i + h_step, w_i:w_i + w_step] = np.array(dst_img)[0:h_step, 0:w_step]
+
+                canvas = Image.fromarray(canvas)
+                canvas.save(hc_img_path, quality=50)
 
 
-def run(source_dir, target_dir, output_dir, ag):
-    src_img = os.listdir(source_dir)
-    tgt_img = os.listdir(target_dir)
-    rg = Registration(ag)
-    for img in src_img:
-        if img != '1547583.12_2457_7371.png':
-            continue
-        base, _ = os.path.splitext(img)
-        if not any([base in d for d in tgt_img]):
-            continue
-        src_path = os.path.join(source_dir, img)
-        dst_path = os.path.join(target_dir, f'{base}.jpg')
-        img1 = Image.open(src_path)
-        img2 = Image.open(dst_path)
-        od = os.path.join(output_dir, img)
-        rg.merge_show_img(img1, img2, od)
-        logger.info(f'{img} registration finished')
+# def register_image(img, source_dir, target_dir, output_dir, rg):
+#     base, _ = os.path.splitext(img)
+#     if not any([base in d for d in os.listdir(target_dir)]):
+#         return
+#     src_path = os.path.join(source_dir, img)
+#     dst_path = os.path.join(target_dir, img)
+#     if not os.path.exists(dst_path):
+#         logger.info(f'file {dst_path} does not exist')
+#         return
+#     img1 = Image.open(src_path)
+#     img2 = Image.open(dst_path)
+#     od = os.path.join(output_dir, img)
+#     rg.merge_show_img(img1, img2, od)
+#     logger.info(f'{img} registration finished')
+# def run(source_dir, target_dir, output_dir, ag):
+#     src_img = os.listdir(source_dir)
+#     rg = Registration(ag)
+#
+#     # 创建一个线程池
+#     with ThreadPoolExecutor(max_workers=5) as executor:
+#         # 提交任务到线程池
+#         futures = [executor.submit(register_image, img, source_dir, target_dir, output_dir, rg) for img in src_img]
+#
+#         # 等待任务完成并处理结果
+#         for future in as_completed(futures):
+#             try:
+#                 future.result()  # 获取结果，如果有异常会在这里抛出
+#             except Exception as e:
+#                 logger.error(f"An error occurred: {e}")
 
 
 parser = BaseOptions().parse()
 parser.add_argument('--alpha', type=int, default=100, help='')
-parser.add_argument('--check', type=bool, default=False)
+parser.add_argument('--check', action='store_true')
 parser.add_argument('--ihc_ext', type=str, default='CK')
+parser.add_argument('--overlap', type=float, default=0)
 if __name__ == '__main__':
     args = parser.parse_args()
-    Registration(args).run()
-    # run('/data2/lbliao/Data/前列腺癌数据/CKPan/pair/4096/CK/ihc/', '/data2/lbliao/Data/前列腺癌数据/CKPan/pair/4096/CK/warped_source/', '/data2/lbliao/Data/前列腺癌数据/CKPan/check/reg/', args)
+    # Registration(args).run()
+    FilterRegistration(args).run()

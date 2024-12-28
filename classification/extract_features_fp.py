@@ -112,10 +112,10 @@ class ExtractFeaturesFP:
 
     def extract(self):
         bags_dataset = DatasetAllBags(self.count_path)
-        constants = MODEL2CONSTANTS['resnet50_trunc']
-        img_transforms = get_eval_transforms(mean=constants['mean'], std=constants['std'], target_img_size=500)
-        # model, img_transforms = get_encoder(self.model_name)
-        model = self.get_model()
+        # constants = MODEL2CONSTANTS['resnet50_trunc']
+        # img_transforms = get_eval_transforms(mean=constants['mean'], std=constants['std'], target_img_size=500)
+        model, img_transforms = get_encoder(self.model_name)
+        # model = self.get_model()
         model.eval()
         model = model.to(self.device)
         total = len(bags_dataset)

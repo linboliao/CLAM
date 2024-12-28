@@ -43,6 +43,7 @@ class Heatmaps:
         self.device = torch.device(f'cuda:{opt.gpus}') if torch.cuda.is_available() else torch.device('cpu')
         self.model = self.get_model(opt.num_classes, opt.feat_size)
         self.model.load_state_dict(torch.load(self.checkpoints, map_location=self.device))
+        self.slide_list = opt.slide_list
 
         param_log(self)
         os.makedirs(self.output_dir, exist_ok=True)
@@ -95,62 +96,84 @@ class Heatmaps:
                                       ignore=[])
         dataset.load_from_h5(True)
         loader = DataLoader(dataset=dataset, batch_size=1, **loader_kwargs)  # 每张wsi的特征数量不一致，batch_size只能为1
-        for count, data in enumerate(tqdm(loader)):
-            patch_coords = []
-            (features, _, coords, slide_id) = data
-            features, coords, slide_id = features.squeeze(0), coords.squeeze(0), slide_id[0]
-            if slide_id != '1547583.10':
-                logger.info(f'skip slide {slide_id}')
-                continue
-            features = features.to(self.device)
-            scores = self.model.get_attention_scores(features)
+        total_scores = []
+        # for i in range(7):
+        for j, top in enumerate([-3.46290, -4.36529, -4.98259, -5.536297, -6.05510970, -6.05510970, -6.05510970]):
+            logger.info(f'Processing slide {j}, top : {top}')
+            for count, data in enumerate(tqdm(loader)):
+                patch_coords = []
+                (features, _, coords, slide_id) = data
+                features, coords, slide_id = features.squeeze(0), coords.squeeze(0), slide_id[0]
+                # if _[0] !=1:
+                #     continue
+                if slide_id not in ['1734281.11', '1547583.13', '1641996.7', '1641996.6', '1641996.11', '1641996.2', '1604701.16', '1641996.8', '1547583.14', '1638897.16', '1638897.13', '1638897.9', '1638897.15', '1636600.10', '1547583.20', '1641996.5', '1642001.1', '1547583.12', '1604701.12', '1638897.12', '1547583.10', '1641996.10', '1638897.19', '1547583.17', '1641996.4', '1547583.18', '1638897.11']:
+                    # logger.info(f'skip slide {slide_id}')
+                    continue
+                if os.path.isfile(os.path.join(self.tmp_coord_dir, f'{slide_id}-{j}.h5')):
+                    # logger.info(f'skip slide {slide_id}')
+                    continue
+                logger.info(f'proces slide {j}, slide {slide_id}')
+                features = features.to(self.device)
+                scores = self.model.get_attention_scores(features)
 
-            scores = [value.item() for value in scores[0]]
-            scores = [np.log10(value) for value in scores]
-            min_val = min(scores)
-            max_val = max(scores)
-            scores = [(value - min_val) / (max_val - min_val) for value in scores]
-            wsi_path = os.path.join(self.slide_dir, slide_id + self.slide_ext)
-            wsi = Aslide(wsi_path) if self.slide_ext == '.kfb' else openslide.OpenSlide(wsi_path)
-            w, h = wsi.level_dimensions[sample_level]
-            thumb = wsi.get_thumbnail((w, h))
-            thumb = Image.fromarray(thumb).convert('RGBA')
-            canvas = np.zeros((h, w), dtype=np.float32)
-            down_patch_size = int(self.patch_size // wsi.level_downsamples[sample_level])
+                scores = [value.item() for value in scores[0]]
+                scores = [np.log10(value) for value in scores]
+                # total_scores += scores
 
-            # sorted_lst = sorted(scores, reverse=True)
-            # index = int(len(sorted_lst) * 0.1)
-            # top10 = sorted_lst[index - 1]
+                # min_val = min(scores)
+                # max_val = max(scores)
+                # scores = [(value - min_val) / (max_val - min_val) for value in scores]
+                wsi_path = os.path.join(self.slide_dir, slide_id + self.slide_ext)
+                wsi = Aslide(wsi_path) if self.slide_ext == '.kfb' else openslide.OpenSlide(wsi_path)
+                w, h = wsi.level_dimensions[sample_level]
+                thumb = wsi.get_thumbnail((w, h))
+                thumb = Image.fromarray(thumb).convert('RGBA')
+                canvas = np.zeros((h, w), dtype=np.float32)
+                down_patch_size = int(self.patch_size // wsi.level_downsamples[sample_level])
 
-            for i, score in enumerate(scores):
-                p_w, p_h = coords[i] // wsi.level_downsamples[sample_level]
-                if score > 0.7:
-                    patch_coords.append(coords[i].tolist())
+                # sorted_lst = sorted(scores, reverse=True)
+                # index = int(len(sorted_lst) * 0.1)
+                # top10 = sorted_lst[index - 1]
 
-                p_w, p_h = int(p_w), int(p_h)
-                if 0 <= p_w < thumb.width and 0 <= p_h < thumb.height:
-                    canvas[p_h:p_h + down_patch_size, p_w:p_w + down_patch_size] = score
-                else:
-                    logger.info(f"Warning: Coordinates ({p_w}, {p_h}) out of image range.")
-            canvas = np.ma.masked_where(~(canvas != 0), canvas)
-            fig, ax = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(10, 5))
-            ax[0].imshow(thumb)
-            ax[1].imshow(canvas, cmap='coolwarm')
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.output_dir, f'{slide_id}.png'), dpi=1000)
+                for i, score in enumerate(scores):
+                    p_w, p_h = coords[i] // wsi.level_downsamples[sample_level]
+                    if score > top:
+                        patch_coords.append(coords[i].tolist())
 
-            if len(patch_coords) > 0:
-                patch_coords = np.array(patch_coords)
-                logger.info(f'Extracted {len(patch_coords)} coordinates')
+                    p_w, p_h = int(p_w), int(p_h)
+                    if 0 <= p_w < thumb.width and 0 <= p_h < thumb.height:
+                        canvas[p_h:p_h + down_patch_size, p_w:p_w + down_patch_size] = score
+                    else:
+                        logger.info(f"Warning: Coordinates ({p_w}, {p_h}) out of image range.")
+                canvas = np.ma.masked_where(~(canvas != 0), canvas)
+                fig, ax = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(10, 5))
+                ax[0].imshow(thumb)
+                ax[1].imshow(canvas, cmap='coolwarm')
+                plt.tight_layout()
+                plt.savefig(os.path.join(self.output_dir, f'{slide_id}.png'), dpi=1000)
+                logger.info(f'finsh slide {j}, slide {slide_id}')
+                if len(patch_coords) > 0:
+                    patch_coords = np.array(patch_coords)
+                    logger.info(f'Extracted {len(patch_coords)} coordinates')
 
-                attr = {
-                    'patch_size': self.patch_size,
-                    'patch_level': 0,
-                    'level_dim': (w, h),
-                    'name': slide_id,
-                    'save_path': ''
-                }
-                self.save_hdf5(slide_id, patch_coords, attr)
+                    attr = {
+                        'patch_size': self.patch_size,
+                        'patch_level': 0,
+                        'level_dim': (w, h),
+                        'name': slide_id,
+                        'save_path': ''
+                    }
+                    self.save_hdf5(slide_id + f"-{j}", patch_coords, attr)
+            # total top 10 -2.7509368
+            # 1 top 10 -3.523976
+            # 1 top 20 -4.37098
+            # total top 20 -3.1921
+            # logger.info(f'avg scores: {np.mean(total_scores)}')
+            # logger.info(f'Median scores: {np.median(total_scores)}')
+            # sorted_lst = sorted(total_scores, reverse=True)
+            # index = int(len(sorted_lst) * 0.1 * (i + 1))
+            # top = sorted_lst[index - 1]
+            # logger.info(f'top {i+1}: {top}')
 
 
 parser = TrainOptions().parse()
