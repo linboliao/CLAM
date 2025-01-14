@@ -65,8 +65,8 @@ def get_points_from_txt(file_path):
     with open(file_path, 'r') as file:
         for line in file:
             values = line.strip().split(',')
-            x_value = float(values[0].split(':')[1].strip())
-            y_value = float(values[1].split(':')[1].strip())
+            x_value = int(float(values[0].split(':')[1].strip()))
+            y_value = int(float(values[1].split(':')[1].strip()))
             points.append([x_value, y_value])
     return np.array(points)
 
@@ -335,10 +335,11 @@ class Registration:
                     traceback.print_exc()
 
 
-class FilterRegistration(Registration):
+class ConcatRegistration(Registration):
     def __init__(self, opt):
         super().__init__(opt)
         self.overlap = opt.overlap
+        self.patch_step = min(256, opt.patch_size)
 
     @staticmethod
     def is_background(img, threshold=5):
@@ -351,7 +352,7 @@ class FilterRegistration(Registration):
         return tissue_percent < 0.05
 
     def registration(self, slide):
-        target_patch_size = 10000
+        self.patch_size = self.patch_size
         slide_name, slide_ext = os.path.splitext(slide)
 
         (a, b, c, d, e, f) = self.get_reg_param(slide_name)
@@ -361,39 +362,39 @@ class FilterRegistration(Registration):
         ihc_wsi = Aslide(ihc_path) if '.kfb' in slide else openslide.OpenSlide(ihc_path)
 
         [w, h] = he_wsi.level_dimensions[self.patch_level]
-        logger.info(f'start to process {slide}, ihc_ext {self.ihc_ext} {slide} width {w} height {h}')
+        logger.info(f'start to process {slide}, ihc_ext {self.ihc_ext} width {w} height {h}')
 
-        for h_s in range(0, h, target_patch_size):
-            for w_s in range(0, w, target_patch_size):
+        for h_s in range(0, h, self.patch_size):
+            for w_s in range(0, w, self.patch_size):
                 hc_img_path = os.path.join(self.ihc_dir, f'{slide_name}_{w_s}_{h_s}.png')
                 if self.skip_done and os.path.isfile(hc_img_path):
                     continue
 
-                canvas = np.full([target_patch_size, target_patch_size, 3], (255, 255, 255), dtype=np.uint8)
-                step = int(self.patch_size * (1 - self.overlap))
-                for h_i in range(0, target_patch_size, step):
+                canvas = np.full([self.patch_size, self.patch_size, 3], (255, 255, 255), dtype=np.uint8)
+                step = int(self.patch_step * (1 - self.overlap))
+                for h_i in range(0, self.patch_size, step):
                     if h - h_s - h_i <= 0:
                         continue
-                    for w_i in range(0, target_patch_size, step):
+                    for w_i in range(0, self.patch_size, step):
                         if w - w_s - w_i <= 0:
                             continue
 
-                        he_img = he_wsi.read_region((w_i + w_s, h_i + h_s), self.patch_level, (min(self.patch_size, w - w_s - w_i), min(self.patch_size, h - h_s - h_i)))
+                        he_img = he_wsi.read_region((w_i + w_s, h_i + h_s), self.patch_level, (min(self.patch_step, w - w_s - w_i), min(self.patch_step, h - h_s - h_i)))
                         if isinstance(he_img, Image.Image):
                             he_img = he_img.convert('RGB')
 
-                        h_step = min(min(self.patch_size, target_patch_size - h_i), h - h_s - h_i)
-                        w_step = min(min(self.patch_size, target_patch_size - w_i), w - w_s - w_i)
+                        h_step = min(min(self.patch_step, self.patch_size - h_i), h - h_s - h_i)
+                        w_step = min(min(self.patch_step, self.patch_size - w_i), w - w_s - w_i)
 
                         if self.is_background(he_img):
                             canvas[h_i:h_i + h_step, w_i:w_i + w_step] = np.array(he_img)[0:h_step, 0:w_step]
                         else:
-                            dst_points = affine_transform(get_square_corner_points((w_i + w_s, h_i + h_s), self.patch_size), a, b, c, d, e, f)
+                            dst_points = affine_transform(get_square_corner_points((w_i + w_s, h_i + h_s), self.patch_step), a, b, c, d, e, f)
                             dst_points = np.reshape(dst_points, (len(dst_points) // 2, 2))
                             cropped_img, corner_points = self.crop_image_and_adjust_corners(ihc_wsi, dst_points)
                             if not cropped_img:
                                 continue
-                            dst_img = warp_image_to_square(cropped_img, corner_points, self.patch_size)
+                            dst_img = warp_image_to_square(cropped_img, corner_points, self.patch_step)
                             if isinstance(dst_img, Image.Image):
                                 dst_img = dst_img.convert('RGB')
                                 dst_img = np.array(dst_img)
@@ -446,4 +447,4 @@ parser.add_argument('--overlap', type=float, default=0)
 if __name__ == '__main__':
     args = parser.parse_args()
     # Registration(args).run()
-    FilterRegistration(args).run()
+    ConcatRegistration(args).run()
