@@ -7,8 +7,8 @@ class BaseOptions:
         self.initialized = False
 
     def initialize(self):
-        self.parser.add_argument('--data_root', type=str)
-        self.parser.add_argument('--patch_size', type=int)
+        self.parser.add_argument('--data_root', type=str, default='/NAS2/Data4/llb/Data/CRC/')
+        self.parser.add_argument('--patch_size', type=int, default=256)
         self.parser.add_argument('--patch_level', type=int, default=0)
 
         # 提取过程中使用默认文件夹结构

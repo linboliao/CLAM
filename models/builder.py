@@ -1,6 +1,8 @@
 import os
 from functools import partial
 import timm
+from timm.models import ResNet, Bottleneck
+
 from .timm_wrapper import TimmCNNEncoder
 import torch
 from utils.constants import MODEL2CONSTANTS

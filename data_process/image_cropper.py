@@ -11,7 +11,7 @@ class ImageCropper:
     def __init__(self, opt):
         self.data_root = opt.data_root
         self.he_dir = opt.he_dir if opt.he_dir else os.path.join(opt.data_root, f'pair/{opt.patch_size}/{opt.ihc_ext}/he/')
-        self.ihc_dir = opt.ihc_dir if opt.ihc_dir else os.path.join(opt.data_root, f'pair/{opt.patch_size}/{opt.ihc_ext}/dhr/reg_ihc/')
+        self.ihc_dir = opt.ihc_dir if opt.ihc_dir else os.path.join(opt.data_root, f'pair/{opt.patch_size}/{opt.ihc_ext}/ihc/')
         self.out_dir = opt.output_dir if opt.output_dir else os.path.join(opt.data_root, f'pair/{opt.output_size}/{opt.ihc_ext}/')
         self.patch_size = opt.patch_size
         self.output_size = opt.output_size
@@ -37,10 +37,17 @@ class ImageCropper:
                 sub_ihc = ihc_img.crop((j, k, j + self.crop_size, k + self.crop_size))
                 sub_he = sub_he.resize((self.output_size, self.output_size))
                 sub_ihc = sub_ihc.resize((self.output_size, self.output_size))
-                sub_he.save(os.path.join(self.tmp_he_dir, f'{base}_{i}.png'))
-                sub_ihc.save(os.path.join(self.tmp_ihc_dir, f'{base}_{i}.png'))
+                sub_he_path = os.path.join(self.tmp_he_dir, f'{base}_{i}.png')
+                sub_ihc_path = os.path.join(self.tmp_ihc_dir, f'{base}_{i}.png')
+                sub_he.save(sub_he_path)
+                sub_ihc.save(sub_ihc_path)
+                if os.path.getsize(sub_ihc_path) <= 1000* 1024:
+                    os.remove(sub_ihc_path)
+                    os.remove(sub_he_path)
 
                 i += 1
+        os.remove(os.path.join(self.he_dir, img))
+        os.remove(os.path.join(self.ihc_dir, f'{base}.jpg'))
         logger.info(f'裁切完成，共生成图片{i}条')
 
     def parallel_run(self):

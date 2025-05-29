@@ -47,6 +47,14 @@ class WholeSlideBag(Dataset):
         return {'img': img, 'coord': coord}
 
 
+def is_background(img, threshold=15):
+    img_array = np.asarray(img, dtype=np.uint8)
+    pixel_diff = np.ptp(img_array, axis=2)  # 使用峰值函数替代max-min[4,5](@ref)
+    exceed_count = np.count_nonzero(pixel_diff > threshold)  # 比sum更快[4](@ref)
+    total_pixels = img_array.shape[0] * img_array.shape[1]
+    return exceed_count / total_pixels < 0.3
+
+
 class WholeSlideBagFp(Dataset):
     def __init__(self, file_path, wsi, img_transforms=None):
         """
@@ -82,19 +90,29 @@ class WholeSlideBagFp(Dataset):
     def __getitem__(self, idx):
         with h5py.File(self.file_path, 'r') as hdf5_file:
             coord = hdf5_file['coords'][idx]
-        img = self.wsi.read_region(coord, self.patch_level, (self.patch_size, self.patch_size))
-        if isinstance(img, np.ndarray):
-            img = Image.fromarray(img)
-        img = img.convert('RGB')
+        (w, h) = self.wsi.level_dimensions[self.patch_level]
+        if 0 <= coord[0] <= w and 0 <= coord[1] <= h:
+            img = self.wsi.read_region(coord, self.patch_level, (self.patch_size, self.patch_size))
+            if isinstance(img, np.ndarray):
+                img = Image.fromarray(img)
+            img = img.convert('RGB')
+            if not is_background(img):
+                img = self.roi_transforms(img)
+                return {'img': img, 'coord': coord}
+            else:
+                return None
+        else:
+            return None
 
-        img = self.roi_transforms(img)
-        return {'img': img, 'coord': coord}
+
+step = 500
+it = 1
 
 
 class DatasetAllBags(Dataset):
 
     def __init__(self, csv_path):
-        self.df = pd.read_csv(csv_path)
+        self.df = pd.read_csv(csv_path).iloc[step * it: step * (it + 1)].reset_index()
 
     def __len__(self):
         return len(self.df)

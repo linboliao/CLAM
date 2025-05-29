@@ -134,6 +134,7 @@ def resnet18_baseline(pretrained=False):
 
 
 def load_pretrained_weights(model, name):
-    pretrained_dict = model_zoo.load_url(model_urls[name])
+    # pretrained_dict = model_zoo.load_url(model_urls[name])
+    pretrained_dict = torch.load('/data2/lbliao/Code/CLAM/classification/train_results-CRC/NCT-CRC-HE-100K/ResNet50/5fold/0521105356_ResNet50/models/model_best.pth', map_location='cpu')  # 可指定设备
     model.load_state_dict(pretrained_dict, strict=False)
     return model

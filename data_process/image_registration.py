@@ -220,9 +220,9 @@ class Registration:
         return list(popt)
 
     def merge_show_img(self, img1, img2, save_path):
-        patch_size = self.patch_size
+        patch_size = img1.width
 
-        w, h = patch_size * 2, patch_size * 2
+        w, h = img1.width * 2, img1.height * 2
         merged_image = Image.new("RGBA", (w, h))
         merged_image.paste(img1, (0, 0))
         merged_image.paste(img2, (patch_size, 0))
@@ -268,9 +268,9 @@ class Registration:
 
         (a, b, c, d, e, f) = self.get_reg_param(slide_name)
 
-        # file = h5py.File(os.path.join(self.coord_dir, f'{slide_name}.h5'), mode='r')
-        # he_points = list(file['coords'][:])
-        he_points = get_points_from_txt(os.path.join(self.points_dir, f'{slide_name}.txt'))
+        file = h5py.File(os.path.join(self.coord_dir, f'{slide_name}.h5'), mode='r')
+        he_points = list(file['coords'][:])
+        # he_points = get_points_from_txt(os.path.join(self.points_dir, f'{slide_name}.txt'))
         he_path = os.path.join(self.slide_dir, slide)
         he_wsi = Aslide(he_path) if '.kfb' in slide else openslide.OpenSlide(he_path)
         ihc_path = os.path.join(self.ihc_slide_dir, f'{slide_name}-{self.ihc_ext}{slide_ext}')
@@ -339,7 +339,7 @@ class ConcatRegistration(Registration):
     def __init__(self, opt):
         super().__init__(opt)
         self.overlap = opt.overlap
-        self.patch_step = min(256, opt.patch_size)
+        self.patch_step = max(256, opt.patch_size)
 
     @staticmethod
     def is_background(img, threshold=5):
@@ -367,7 +367,9 @@ class ConcatRegistration(Registration):
         for h_s in range(0, h, self.patch_size):
             for w_s in range(0, w, self.patch_size):
                 hc_img_path = os.path.join(self.ihc_dir, f'{slide_name}_{w_s}_{h_s}.png')
+                he_img_path = os.path.join(self.he_dir, f'{slide_name}_{w_s}_{h_s}.png')
                 if self.skip_done and os.path.isfile(hc_img_path):
+                    logger.info(f'{slide} {w_s} {h_s} skipped')
                     continue
 
                 canvas = np.full([self.patch_size, self.patch_size, 3], (255, 255, 255), dtype=np.uint8)
@@ -380,8 +382,12 @@ class ConcatRegistration(Registration):
                             continue
 
                         he_img = he_wsi.read_region((w_i + w_s, h_i + h_s), self.patch_level, (min(self.patch_step, w - w_s - w_i), min(self.patch_step, h - h_s - h_i)))
+
                         if isinstance(he_img, Image.Image):
                             he_img = he_img.convert('RGB')
+                            he_img.save(he_img_path)
+                        else:
+                            Image.fromarray(he_img).save(he_img_path)
 
                         h_step = min(min(self.patch_step, self.patch_size - h_i), h - h_s - h_i)
                         w_step = min(min(self.patch_step, self.patch_size - w_i), w - w_s - w_i)
@@ -408,35 +414,40 @@ class ConcatRegistration(Registration):
                 canvas.save(hc_img_path, quality=50)
 
 
-# def register_image(img, source_dir, target_dir, output_dir, rg):
-#     base, _ = os.path.splitext(img)
-#     if not any([base in d for d in os.listdir(target_dir)]):
-#         return
-#     src_path = os.path.join(source_dir, img)
-#     dst_path = os.path.join(target_dir, img)
-#     if not os.path.exists(dst_path):
-#         logger.info(f'file {dst_path} does not exist')
-#         return
-#     img1 = Image.open(src_path)
-#     img2 = Image.open(dst_path)
-#     od = os.path.join(output_dir, img)
-#     rg.merge_show_img(img1, img2, od)
-#     logger.info(f'{img} registration finished')
-# def run(source_dir, target_dir, output_dir, ag):
-#     src_img = os.listdir(source_dir)
-#     rg = Registration(ag)
-#
-#     # 创建一个线程池
-#     with ThreadPoolExecutor(max_workers=5) as executor:
-#         # 提交任务到线程池
-#         futures = [executor.submit(register_image, img, source_dir, target_dir, output_dir, rg) for img in src_img]
-#
-#         # 等待任务完成并处理结果
-#         for future in as_completed(futures):
-#             try:
-#                 future.result()  # 获取结果，如果有异常会在这里抛出
-#             except Exception as e:
-#                 logger.error(f"An error occurred: {e}")
+def register_image(img, source_dir, target_dir, output_dir, rg):
+    base, _ = os.path.splitext(img)
+    if not any([base in d for d in os.listdir(target_dir)]):
+        return
+    src_path = os.path.join(source_dir, img)
+    dst_path = os.path.join(target_dir, img)
+    if not os.path.exists(dst_path):
+        logger.info(f'file {dst_path} does not exist')
+        return
+    img1 = Image.open(src_path).convert('RGB')
+    img2 = Image.open(dst_path).convert('RGB')
+    w1, h1 = img1.size
+    img1 = img1.crop([70, 70, w1 - 70, w1 - 70])
+    img2 = img2.crop([70, 70, w1 - 70, w1 - 70])
+    od = os.path.join(output_dir, img)
+    rg.merge_show_img(img1, img2, od)
+    logger.info(f'{img} registration finished')
+
+
+def run(source_dir, target_dir, output_dir, ag):
+    src_img = os.listdir(source_dir)
+    rg = Registration(ag)
+    os.makedirs(output_dir, exist_ok=True)
+    # 创建一个线程池
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        # 提交任务到线程池
+        futures = [executor.submit(register_image, img, source_dir, target_dir, output_dir, rg) for img in src_img]
+
+        # 等待任务完成并处理结果
+        for future in as_completed(futures):
+            try:
+                future.result()  # 获取结果，如果有异常会在这里抛出
+            except Exception as e:
+                logger.error(f"An error occurred: {e}")
 
 
 parser = BaseOptions().parse()
@@ -448,3 +459,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     # Registration(args).run()
     ConcatRegistration(args).run()
+    # run('/data2/lbliao/庄震丰HE-IMC/HE/', '/data2/lbliao/庄震丰HE-IMC/tmp/', '/data2/lbliao/tmp', args)

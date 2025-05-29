@@ -35,7 +35,7 @@ class Train:
                                            data_dir=self.feat_dir,
                                            shuffle=False,
                                            print_info=True,
-                                           label_dict={0: 0, 1: 1},
+                                           label_dict={0: 0, 1: 1, 2: 2, 3: 3},
                                            patient_strat=False,
                                            ignore=[])
 
@@ -124,7 +124,6 @@ class Train:
     def train(self):
         for epoch in self.max_epochs:
             pass
-
 
     def run(self):
         all_test_auc, all_val_auc, all_test_acc, all_val_acc = [], [], [], []

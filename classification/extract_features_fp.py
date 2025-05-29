@@ -1,10 +1,12 @@
 import os
+import re
 import sys
 import time
 
 import h5py
 import numpy as np
 import openslide
+import pandas as pd
 import torch
 import torch.nn as nn
 import torchvision
@@ -15,7 +17,6 @@ from tqdm import tqdm
 from dataset_modules.dataset_h5 import DatasetAllBags, WholeSlideBagFp
 from models import get_encoder
 from models.resnet_custom_dep import resnet18_baseline, resnet50_baseline
-from options.base_options import BaseOptions
 from options.train_options import TrainOptions
 from utils.constants import MODEL2CONSTANTS
 from utils.file_utils import save_hdf5
@@ -25,12 +26,15 @@ from utils.utils import param_log
 sys.path.append('/data2/lbliao/Code/aslide/')
 from aslide import Aslide
 
+sys.path.insert(1, r'/data2/lbliao/Code/opensdpc/')
+from opensdpc.opensdpc import OpenSdpc
+
 
 class ExtractFeaturesFP:
     def __init__(self, opt):
         self.slide_dir = opt.slide_dir if opt.slide_dir else os.path.join(opt.data_root, 'slides')
         self.coord_dir = opt.coord_dir if opt.coord_dir else os.path.join(opt.data_root, f'patch/{opt.patch_size}/coord')
-        self.feat_dir = opt.feat_dir if opt.feat_dir else os.path.join(opt.data_root, f'features/{opt.patch_size}/{opt.feat_model}/')
+        self.feat_dir = opt.feat_dir if opt.feat_dir else os.path.join(opt.data_root, f'features/{opt.patch_size}/{opt.feat_model}_test/')
         self.count_dir = opt.count_dir if opt.count_dir else os.path.join(opt.data_root, f'patch/{opt.patch_size}/')
         self.count_path = os.path.join(self.count_dir, f'count.csv')
 
@@ -59,12 +63,14 @@ class ExtractFeaturesFP:
 
         mode = 'w'
         for count, data in enumerate(tqdm(loader)):
+            if data is None:
+                continue
             with torch.inference_mode():
                 batch = data['img'].to(self.device, non_blocking=True)
                 features = model(batch)
                 features = features.cpu().numpy()
 
-                asset_dict = {'features': features, 'coords': data['coord'].numpy().astype(np.int32)}
+                asset_dict = {'features': features, 'coords': np.array(data['coord']).astype(np.int32)}
                 save_hdf5(output_path, asset_dict, attr_dict=None, mode=mode)
                 mode = 'a'
 
@@ -112,20 +118,27 @@ class ExtractFeaturesFP:
 
     def extract(self):
         bags_dataset = DatasetAllBags(self.count_path)
-        # constants = MODEL2CONSTANTS['resnet50_trunc']
-        # img_transforms = get_eval_transforms(mean=constants['mean'], std=constants['std'], target_img_size=500)
-        model, img_transforms = get_encoder(self.model_name)
-        # model = self.get_model()
+        constants = MODEL2CONSTANTS['resnet50_trunc']
+        img_transforms = get_eval_transforms(mean=constants['mean'], std=constants['std'], target_img_size=256)
+        # model, img_transforms = get_encoder(self.model_name)
+        model = self.get_model()
         model.eval()
         model = model.to(self.device)
         total = len(bags_dataset)
 
         loader_kwargs = {'num_workers': 8, 'pin_memory': True} if self.device.type == "cuda" else {}
         dest_files = os.listdir(os.path.join(self.feat_dir, 'pt_files'))
-
+        df = pd.read_csv(os.path.join('/NAS2/Data4/llb/Data/CRC/labels', 'label.csv'))
+        count = 0
         for idx in tqdm(range(total)):
+            if count >= 50:
+                break
             slide_id, slide_ext = os.path.splitext(bags_dataset[idx])
             bag_name = slide_id + '.h5'
+            output_path = os.path.join(self.feat_dir, 'h5_files', bag_name)
+            # if os.path.exists(output_path):
+            #     logger.info(f'Skipping {bag_name} because it already exists.')
+            #     continue
             h5_file_path = os.path.join(self.coord_dir, bag_name)
             slide_file_path = os.path.join(self.slide_dir, slide_id + slide_ext)
             logger.info(f'progress: {idx}/{total},{slide_id}')
@@ -133,13 +146,46 @@ class ExtractFeaturesFP:
             if self.skip_done and slide_id + '.pt' in dest_files:
                 logger.info(f'skipped {slide_id}')
                 continue
+            v = df.loc[df['slide_id'] == bags_dataset[idx], 'label'].values.tolist()
+            processed = ['431607', 'ZZ54', '443348', '407385', '409804', '1186631', 'ZZ19', '1180981', '358773', '335130', '456716', '374189', '584016', '432938', '1218143', '438863', '606582', '418670', '364586', 'ZZ12', '1195978', '440297', '408935', '483114', '444619', '466755', '407388', '461119', '441639', '363848', '375600', 'ZZ35', 'ZZ21', 'ZZ28', '610362', '421650', 'ZZ25', '358374', '362853', '417824', '356464', '384848', '389005', '1222919', '479676', 'ZZ38', 'ZZ45', '1154348', '538048', '412196', '381657', '1186304', '428511', 'ZZ39', '359800', 'ZZ50', '480324', '374911', 'ZZ55', '375394', '1250157 B5', '1171040', '341177', '554723', '370993', '1250157 B6', '780564', '1232205', '563028', '407163', '372785', '1177401', '1152597', '548546', 'ZZ48', '392334', '403316', '352908', '561895', '750937', '369361', '331161', '745400', 'ZZ14', '1209004', '1259902 A5', '436483', 'ZZ27', '436485', '1247753 B5', 'ZZ34', '420666', '402641', '1232590', '377758', 'ZZ57', '367104', '1246808 A11 举例癌区分辨', '408545', '1247753 B6粘液', '372308', '368366', '1246808 A9', 'ZZ4', '436880', '364992', '1148306', '1190123', 'ZZ6', '439261', '412463', '605724', '552091', '1214513', '1209576']
+            name_without_ext = os.path.splitext(slide_id)[0]
+            prefix = re.split(r"[-_]", name_without_ext, maxsplit=1)[0]
+            if prefix in processed:
+                logger.info(f'skipped {slide_id}, slide in processed file')
+                continue
+            if len(v) >0 and v[0] != 1:
+                logger.info(f'skipped {slide_id}, no label 0')
+                continue
 
-            output_path = os.path.join(self.feat_dir, 'h5_files', bag_name)
             time_start = time.time()
-            wsi = openslide.open_slide(slide_file_path) if slide_ext != '.kfb' else Aslide(slide_file_path)
+            if slide_ext == '.kfb':
+                wsi = Aslide(slide_file_path)
+            elif slide_ext == '.sdpc':
+                wsi = OpenSdpc(slide_file_path)
+            else:
+                wsi = openslide.OpenSlide(slide_file_path)
             dataset = WholeSlideBagFp(file_path=h5_file_path, wsi=wsi, img_transforms=img_transforms)
 
-            loader = DataLoader(dataset=dataset, batch_size=self.batch_size, **loader_kwargs)
+            def collate_fn(batch):
+                original_batch_size = len(batch)  # 记录原始批次大小
+                batch = [item for item in batch if item is not None]  # 过滤无效数据
+                if len(batch) < self.batch_size:
+                    return None
+                # # 重新采样逻辑
+                # while len(batch) < original_batch_size:
+                #     # 随机生成新索引（需根据实际数据集长度调整）
+                #     new_idx = np.random.randint(int(len(dataset) * 0.4), int(len(dataset) * 0.6))  # 假设dataset是全局可访问的
+                #     new_item = dataset[new_idx]  # 重新采样
+                #
+                #     if new_item is not None:  # 仅添加有效样本
+                #         batch.append(new_item)
+
+                # 合并有效数据
+                imgs = torch.stack([item['img'] for item in batch])
+                coords = [item['coord'] for item in batch]
+                return {'img': imgs, 'coord': coords}
+
+            loader = DataLoader(dataset=dataset, batch_size=self.batch_size, collate_fn=collate_fn, **loader_kwargs)
             output_file_path = self.compute_with_dataloader(output_path, loader=loader, model=model, verbose=1)
 
             time_elapsed = time.time() - time_start
@@ -152,11 +198,10 @@ class ExtractFeaturesFP:
             features = torch.from_numpy(features)
             bag_base, _ = os.path.splitext(bag_name)
             torch.save(features, os.path.join(self.feat_dir, 'pt_files', bag_base + '.pt'))
+            count += 1
 
 
 parser = TrainOptions().parse()
-parser.add_argument('--skip_done', type=bool, default=True)
-parser.add_argument('--feat_dir', type=str)
 
 if __name__ == '__main__':
     args = parser.parse_args()

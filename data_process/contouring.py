@@ -39,8 +39,8 @@ class BaseContour:
 
     def cv_contour(self, patch: str | pathlib.Path):
         # 根据色彩范围，使用 opencv 框出目标
-        lower_bound = np.array([5, 5, 10])
-        upper_bound = np.array([220, 220, 185])
+        lower_bound = np.array([40, 40, 40])
+        upper_bound = np.array([220, 220, 150])
 
         image_path = os.path.join(self.patch_dir, patch)
         image = cv2.imread(image_path)

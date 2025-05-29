@@ -1,7 +1,7 @@
 import os
 import sys
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
 
 import cv2
 import h5py
@@ -15,6 +15,9 @@ from utils.utils import param_log
 
 sys.path.insert(0, r'/data2/lbliao/Code/aslide')
 from aslide import Aslide
+
+sys.path.insert(1, r'/data2/lbliao/Code/opensdpc/')
+from opensdpc.opensdpc import OpenSdpc
 
 
 class PatchCoordsGenerator:
@@ -108,7 +111,7 @@ class PatchCoordsGenerator:
                 'patch_level': self.patch_level,
                 'level_dim': (w, h),
                 'name': slide_name,
-                'save_path': mask_path
+                'save_path': os.path.join(self.coord_dir, f'{slide_name}.h5')
             }
             self.save_hdf5(slide_name, coords, attr)
 
@@ -118,7 +121,13 @@ class PatchCoordsGenerator:
         slide_name, slide_ext = os.path.splitext(os.path.basename(slide))
         logger.info(f"start to process {slide}")
         slide_path = os.path.join(self.slide_dir, slide)
-        wsi = Aslide(slide_path) if '.kfb' in slide else OpenSlide(slide_path)
+
+        if slide_ext == '.kfb':
+            wsi = Aslide(slide_path)
+        elif slide_ext == '.sdpc':
+            wsi = OpenSdpc(slide_path)
+        else:
+            wsi = OpenSlide(slide_path)
         coord_num = self.get_coords(wsi, slide_name)
         df.loc[len(df)] = {'slide_id': slide, 'coord_num': coord_num}
         logger.info(f"Finished processing: {slide}")
@@ -142,7 +151,7 @@ class PatchCoordsGenerator:
         else:
             df = pd.DataFrame(columns=['slide_id', 'coord_num'])
 
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=50) as executor:
             futures = [executor.submit(self.process_slide, slide, df) for slide in self.slides]
             for future in as_completed(futures):
                 try:
@@ -153,8 +162,57 @@ class PatchCoordsGenerator:
         logger.info(f"CSV file created at {csv_path}")
 
 
+def is_background(img, threshold=50):
+    img_array = np.asarray(img, dtype=np.uint8)
+    pixel_diff = np.ptp(img_array, axis=2)  # 使用峰值函数替代max-min[4,5](@ref)
+    exceed_count = np.count_nonzero(pixel_diff > threshold)  # 比sum更快[4](@ref)
+    total_pixels = img_array.shape[0] * img_array.shape[1]
+    return exceed_count / total_pixels < 0.3
+
+
+def process_coord(coord, wsi, patch_level=0, patch_size=256):
+    patch = wsi.read_region(coord, patch_level, (patch_size, patch_size))
+    return coord if not is_background(np.array(patch)) else None
+
+
+class CoordsGenerator(PatchCoordsGenerator):
+    def __init__(self, opt):
+        super().__init__(opt)
+
+    def get_coords(self, wsi, slide_name):
+        (w, h) = wsi.level_dimensions[self.patch_level]
+        step = int(self.patch_size * (1 - self.overlap))
+        h_steps = (h - self.patch_size + step - 1) // step
+        w_steps = (w - self.patch_size + step - 1) // step
+
+        coords = [
+            [i * step, j * step]
+            for i in range(w_steps)
+            for j in range(h_steps)
+        ]
+
+        # with ProcessPoolExecutor(max_workers=50) as executor:
+        #     results = executor.map(process_coord, coords, [wsi] * len(coords))
+        #     new_coords = [res for res in results if res]
+        logger.info(f"{slide_name} coords filtered")
+        # if len(new_coords) > 0:
+        coords = np.array(coords)
+        logger.info(f'Extracted {len(coords)} coordinates')
+
+        attr = {
+            'patch_size': self.patch_size,
+            'patch_level': self.patch_level,
+            'level_dim': (w, h),
+            'name': slide_name,
+            'save_path': os.path.join(self.coord_dir, f'{slide_name}.h5')
+        }
+        self.save_hdf5(slide_name, coords, attr)
+        logger.info(f'processed finished {slide_name}')
+
+        return len(coords)
+
+
 parser = BaseOptions().parse()
-parser.add_argument('--skip_done', action='store_true', help='skip processing slides')
 parser.add_argument('--min_RGB', type=int, default=230, help='')
 parser.add_argument('--min_RGB_diffs', type=int, default=30, help='组织部分 rgb 最小差异值')
 parser.add_argument('--max_RGB_diffs', type=int, default=256, help='组织部分 rgb 最小差异值')
@@ -162,4 +220,5 @@ parser.add_argument('--overlap', type=float, default=0, help='patch 重叠率')
 parser.add_argument('--tissue_ratio', type=float, default=0.3, help='组织占 patch 比重')
 if __name__ == '__main__':
     args = parser.parse_args()
-    PatchCoordsGenerator(args).run()
+    # PatchCoordsGenerator(args).run()
+    CoordsGenerator(args).run()

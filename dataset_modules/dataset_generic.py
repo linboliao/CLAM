@@ -72,7 +72,7 @@ class Generic_WSI_Classification_Dataset(Dataset):
 
 		self.slide_data = slide_data
 
-		self.patient_data_prep(patient_voting)
+		# self.patient_data_prep(patient_voting)
 		self.cls_ids_prep()
 
 		if print_info:
