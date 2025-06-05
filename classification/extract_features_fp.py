@@ -34,7 +34,7 @@ class ExtractFeaturesFP:
     def __init__(self, opt):
         self.slide_dir = opt.slide_dir if opt.slide_dir else os.path.join(opt.data_root, 'slides')
         self.coord_dir = opt.coord_dir if opt.coord_dir else os.path.join(opt.data_root, f'patch/{opt.patch_size}/coord')
-        self.feat_dir = opt.feat_dir if opt.feat_dir else os.path.join(opt.data_root, f'features/{opt.patch_size}/{opt.feat_model}_test/')
+        self.feat_dir = opt.feat_dir if opt.feat_dir else os.path.join(opt.data_root, f'features/{opt.patch_size}/{opt.feat_model}_patient/')
         self.count_dir = opt.count_dir if opt.count_dir else os.path.join(opt.data_root, f'patch/{opt.patch_size}/')
         self.count_path = os.path.join(self.count_dir, f'count.csv')
 
@@ -134,12 +134,15 @@ class ExtractFeaturesFP:
             if count >= 50:
                 break
             slide_id, slide_ext = os.path.splitext(bags_dataset[idx])
-            bag_name = slide_id + '.h5'
+            bag_name1 = slide_id + '.h5'
+            name_without_ext = os.path.splitext(slide_id)[0]
+            prefix = re.split(r"[-_]", name_without_ext, maxsplit=1)[0]
+            bag_name = prefix + '.h5'
             output_path = os.path.join(self.feat_dir, 'h5_files', bag_name)
             # if os.path.exists(output_path):
             #     logger.info(f'Skipping {bag_name} because it already exists.')
             #     continue
-            h5_file_path = os.path.join(self.coord_dir, bag_name)
+            h5_file_path = os.path.join(self.coord_dir, bag_name1)
             slide_file_path = os.path.join(self.slide_dir, slide_id + slide_ext)
             logger.info(f'progress: {idx}/{total},{slide_id}')
 
@@ -147,14 +150,14 @@ class ExtractFeaturesFP:
                 logger.info(f'skipped {slide_id}')
                 continue
             v = df.loc[df['slide_id'] == bags_dataset[idx], 'label'].values.tolist()
-            processed = ['431607', 'ZZ54', '443348', '407385', '409804', '1186631', 'ZZ19', '1180981', '358773', '335130', '456716', '374189', '584016', '432938', '1218143', '438863', '606582', '418670', '364586', 'ZZ12', '1195978', '440297', '408935', '483114', '444619', '466755', '407388', '461119', '441639', '363848', '375600', 'ZZ35', 'ZZ21', 'ZZ28', '610362', '421650', 'ZZ25', '358374', '362853', '417824', '356464', '384848', '389005', '1222919', '479676', 'ZZ38', 'ZZ45', '1154348', '538048', '412196', '381657', '1186304', '428511', 'ZZ39', '359800', 'ZZ50', '480324', '374911', 'ZZ55', '375394', '1250157 B5', '1171040', '341177', '554723', '370993', '1250157 B6', '780564', '1232205', '563028', '407163', '372785', '1177401', '1152597', '548546', 'ZZ48', '392334', '403316', '352908', '561895', '750937', '369361', '331161', '745400', 'ZZ14', '1209004', '1259902 A5', '436483', 'ZZ27', '436485', '1247753 B5', 'ZZ34', '420666', '402641', '1232590', '377758', 'ZZ57', '367104', '1246808 A11 举例癌区分辨', '408545', '1247753 B6粘液', '372308', '368366', '1246808 A9', 'ZZ4', '436880', '364992', '1148306', '1190123', 'ZZ6', '439261', '412463', '605724', '552091', '1214513', '1209576']
-            name_without_ext = os.path.splitext(slide_id)[0]
-            prefix = re.split(r"[-_]", name_without_ext, maxsplit=1)[0]
-            if prefix in processed:
-                logger.info(f'skipped {slide_id}, slide in processed file')
-                continue
+            # processed = ['431607', 'ZZ54', '443348', '407385', '409804', '1186631', 'ZZ19', '1180981', '358773', '335130', '456716', '374189', '584016', '432938', '1218143', '438863', '606582', '418670', '364586', 'ZZ12', '1195978', '440297', '408935', '483114', '444619', '466755', '407388', '461119', '441639', '363848', '375600', 'ZZ35', 'ZZ21', 'ZZ28', '610362', '421650', 'ZZ25', '358374', '362853', '417824', '356464', '384848', '389005', '1222919', '479676', 'ZZ38', 'ZZ45', '1154348', '538048', '412196', '381657', '1186304', '428511', 'ZZ39', '359800', 'ZZ50', '480324', '374911', 'ZZ55', '375394', '1250157 B5', '1171040', '341177', '554723', '370993', '1250157 B6', '780564', '1232205', '563028', '407163', '372785', '1177401', '1152597', '548546', 'ZZ48', '392334', '403316', '352908', '561895', '750937', '369361', '331161', '745400', 'ZZ14', '1209004', '1259902 A5', '436483', 'ZZ27', '436485', '1247753 B5', 'ZZ34', '420666', '402641', '1232590', '377758', 'ZZ57', '367104', '1246808 A11 举例癌区分辨', '408545', '1247753 B6粘液', '372308', '368366', '1246808 A9', 'ZZ4', '436880', '364992', '1148306', '1190123', 'ZZ6', '439261', '412463', '605724', '552091', '1214513', '1209576']
+            # name_without_ext = os.path.splitext(slide_id)[0]
+            # prefix = re.split(r"[-_]", name_without_ext, maxsplit=1)[0]
+            # if prefix in processed:
+            #     logger.info(f'skipped {slide_id}, slide in processed file')
+            #     continue
             if len(v) >0 and v[0] != 1:
-                logger.info(f'skipped {slide_id}, no label 0')
+                logger.info(f'skipped {slide_id}, no label 1')
                 continue
 
             time_start = time.time()

@@ -105,7 +105,7 @@ class WholeSlideBagFp(Dataset):
             return None
 
 
-step = 500
+step = 250
 it = 1
 
 
