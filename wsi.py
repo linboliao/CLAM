@@ -34,7 +34,7 @@ class WSIOperator(openslide.OpenSlide):
             self.mpp = slide.mpp
         elif self.suffix == '.sdpc':
             slide = OpenSdpc(str(filename))
-            self.mpp = slide.mpp
+            self.mpp = 20
         else:
             slide = openslide.OpenSlide(str(filename))
             self.mpp = int(slide.properties.get('aperio.AppMag', '20'))

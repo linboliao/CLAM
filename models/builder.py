@@ -24,10 +24,11 @@ def has_CONCH():
 
 def has_UNI():
     HAS_UNI = False
-    UNI_CKPT_PATH = ''
+    UNI_CKPT_PATH = r'/data2/lbliao/Code/CLAM/ckpts/uni/pytorch_model.bin'
     # check if UNI_CKPT_PATH is set, catch exception if not
     try:
         # check if UNI_CKPT_PATH is set
+        os.environ['UNI_CKPT_PATH'] = r'/data2/lbliao/Code/CLAM/ckpts/uni/pytorch_model.bin'
         if 'UNI_CKPT_PATH' not in os.environ:
             raise ValueError('UNI_CKPT_PATH not set')
         HAS_UNI = True

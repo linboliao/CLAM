@@ -86,7 +86,7 @@ if __name__ == '__main__':
     patient_dict = df.groupby('patient_id')['slide_id'].apply(list).to_dict()
 
     for bag_candidate_idx in tqdm(range(total)):
-        patient_id = bags_dataset[bag_candidate_idx]
+        patient_id = str(bags_dataset[bag_candidate_idx])
         bag_name = patient_id + '.h5'
         if not patient_dict[patient_id]:
             print(f'{patient_id} 下没有 slide')

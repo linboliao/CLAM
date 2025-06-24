@@ -95,8 +95,11 @@ class Whole_Slide_Bag_FP_NoCoords(Whole_Slide_Bag_FP):
     def __getitem__(self, idx):
         with h5py.File(self.file_path, 'r') as hdf5_file:
             coord = hdf5_file['coords'][idx]
-        img = self.wsi.read_region(coord, self.patch_level, (self.patch_size, self.patch_size), check_background=True).convert('RGB')
-
+        img = self.wsi.read_region(coord, self.patch_level, (self.patch_size, self.patch_size), check_background=True)
+        if not img:
+            return img
+        else:
+            img = img.convert('RGB')
         img = self.roi_transforms(img)
         return {'img': img, 'coord': coord}
 
