@@ -9,13 +9,13 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from dataset_modules.dataset_h5 import Dataset_All_Bags_Patient, Whole_Slide_Bag_FP_NoCoords
+from dataset_modules.dataset_h5 import Dataset_All_Bags, Whole_Slide_Bag_FP_NoCoords
 from models import get_encoder
 from utils.file_utils import save_hdf5
 from wsi import WSIOperator
 
 # TODO 指定 GPU
-GPU = 2
+GPU = 5
 device = torch.device(f'cuda:{GPU}') if torch.cuda.is_available() else torch.device('cpu')
 
 
@@ -51,7 +51,7 @@ parser = argparse.ArgumentParser(description='Feature Extraction')
 parser.add_argument('--data_h5_dir', type=str, default='/NAS2/Data4/llb/Data/CRC/patch/256/coord')
 parser.add_argument('--data_slide_dir', type=str, default='/NAS2/Data4/llb/Data/CRC/slides')
 parser.add_argument('--csv_path', type=str, default='/NAS2/Data4/llb/Data/CRC/labels/label.csv')
-parser.add_argument('--feat_dir', type=str, default='/NAS2/Data1/lbliao/Data/CRC/features_patient')
+parser.add_argument('--feat_dir', type=str, default='/NAS2/Data1/lbliao/Data/CRC/features_slide')
 parser.add_argument('--model_name', type=str, default='uni_v1', choices=['resnet50_trunc', 'uni_v1', 'conch_v1'])
 parser.add_argument('--batch_size', type=int, default=256)
 parser.add_argument('--no_auto_skip', default=False, action='store_true')
@@ -66,10 +66,8 @@ if __name__ == '__main__':
     df = pd.read_csv(csv_path, encoding='utf-8-sig')
     # TODO 指定医院
     df = df[df['data_source'] == '中日友好医院结直肠癌数据']
-    patient_df = df.drop_duplicates(subset=['patient_id'])
-    patient_df.to_csv('tmp_patient.csv', index=False)
 
-    bags_dataset = Dataset_All_Bags_Patient('tmp_patient.csv')
+    bags_dataset = Dataset_All_Bags(args.csv_path)
 
     os.makedirs(args.feat_dir, exist_ok=True)
     os.makedirs(os.path.join(args.feat_dir, 'pt_files'), exist_ok=True)
@@ -84,54 +82,48 @@ if __name__ == '__main__':
 
     loader_kwargs = {'num_workers': 8, 'pin_memory': True} if device.type == "cuda" else {}
 
-    # 按patient_id分组，将slide_id转换为列表
-    patient_dict = df.groupby('patient_id')['slide_id'].apply(list).to_dict()
-
     for bag_candidate_idx in tqdm(range(total)):
-        patient_id = str(bags_dataset[bag_candidate_idx])
-        bag_name = patient_id + '.h5'
-        if not patient_dict[patient_id]:
-            print(f'{patient_id} 下没有 slide')
+        slide_name = bags_dataset[bag_candidate_idx]
+        slide_id, slide_ext = os.path.splitext(slide_name)
+        bag_name = slide_id + '.h5'
+        h5_file_path = os.path.join(args.data_h5_dir, bag_name)
+        slide_file_path = os.path.join(args.data_slide_dir, slide_id + slide_ext)
+        print('\nprogress: {}/{}'.format(bag_candidate_idx, total))
+        print(slide_id)
+
+        if not args.no_auto_skip and slide_id + '.pt' in dest_files:
+            print('skipped {}'.format(slide_id))
             continue
-        if not args.no_auto_skip and patient_id + '.pt' in dest_files:
-            print('skipped {}'.format(patient_id))
-            continue
-        for slide_name in patient_dict[patient_id]:
-            slide_id, ext = os.path.splitext(slide_name)
-            sub_bag_name = slide_id + '.h5'
-            h5_file_path = os.path.join(args.data_h5_dir, sub_bag_name)
-            slide_file_path = os.path.join(args.data_slide_dir, slide_name)
-            print('\nprogress: {}/{}'.format(bag_candidate_idx, total))
-            print(slide_id)
 
-            output_path = os.path.join(args.feat_dir, 'h5_files', bag_name)
-            time_start = time.time()
-            wsi = WSIOperator(slide_file_path)
-            dataset = Whole_Slide_Bag_FP_NoCoords(file_path=h5_file_path,
-                                                  wsi=wsi,
-                                                  img_transforms=img_transforms)
+        output_path = os.path.join(args.feat_dir, 'h5_files', bag_name)
+        time_start = time.time()
+        wsi = WSIOperator(slide_file_path)
+        dataset = Whole_Slide_Bag_FP_NoCoords(file_path=h5_file_path,
+                                     wsi=wsi,
+                                     img_transforms=img_transforms)
 
 
-            def collate_fn(batch):
-                batch = [item for item in batch if item is not None]  # 过滤无效数据
-                # 合并有效数据
-                if not batch:
-                    return {'img': None, 'coord': None}
-                imgs = torch.stack([item['img'] for item in batch])
-                coords = [item['coord'] for item in batch]
-                return {'img': imgs, 'coord': coords}
+        def collate_fn(batch):
+            batch = [item for item in batch if item is not None]  # 过滤无效数据
+            # 合并有效数据
+            if not batch:
+                return {'img': None, 'coord': None}
+            imgs = torch.stack([item['img'] for item in batch])
+            coords = [item['coord'] for item in batch]
+            return {'img': imgs, 'coord': coords}
 
 
-            loader = DataLoader(dataset=dataset, batch_size=args.batch_size, collate_fn=collate_fn, **loader_kwargs)
-            output_file_path = compute_w_loader(output_path, loader=loader, model=model, verbose=1)
+        loader = DataLoader(dataset=dataset, batch_size=args.batch_size, collate_fn=collate_fn, **loader_kwargs)
+        output_file_path = compute_w_loader(output_path, loader=loader, model=model, verbose=1)
 
-            time_elapsed = time.time() - time_start
-            print('\ncomputing features for {} took {} s'.format(output_file_path, time_elapsed))
-            with h5py.File(output_file_path, "r") as file:
-                features = file['features'][:]
-                print('features size: ', features.shape)
-                print('coordinates size: ', file['coords'].shape)
+        time_elapsed = time.time() - time_start
+        print('\ncomputing features for {} took {} s'.format(output_file_path, time_elapsed))
 
-            features = torch.from_numpy(features)
-            bag_base, _ = os.path.splitext(bag_name)
-            torch.save(features, os.path.join(args.feat_dir, 'pt_files', bag_base + '.pt'))
+        with h5py.File(output_file_path, "r") as file:
+            features = file['features'][:]
+            print('features size: ', features.shape)
+            print('coordinates size: ', file['coords'].shape)
+
+        features = torch.from_numpy(features)
+        bag_base, _ = os.path.splitext(bag_name)
+        torch.save(features, os.path.join(args.feat_dir, 'pt_files', bag_base + '.pt'))

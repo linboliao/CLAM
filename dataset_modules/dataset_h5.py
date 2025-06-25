@@ -104,10 +104,15 @@ class Whole_Slide_Bag_FP_NoCoords(Whole_Slide_Bag_FP):
         return {'img': img, 'coord': coord}
 
 
+step = 50
+it = 2
+print(f'提取 idx {step * it}~{step * (it + 1)} 的特征')
+
+
 class Dataset_All_Bags(Dataset):
 
     def __init__(self, csv_path):
-        self.df = pd.read_csv(csv_path)
+        self.df = pd.read_csv(csv_path).iloc[step * it: step * (it + 1)].reset_index()
 
     def __len__(self):
         return len(self.df)
