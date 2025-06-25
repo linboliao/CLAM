@@ -14,10 +14,12 @@ from models import get_encoder
 from utils.file_utils import save_hdf5
 from wsi import WSIOperator
 
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+# TODO 指定 GPU
+GPU = 1
+device = torch.device(f'cuda:{GPU}') if torch.cuda.is_available() else torch.device('cpu')
 
 
-def compute_w_loader(output_path, loader, model, slide_id, verbose=0):
+def compute_w_loader(output_path, loader, model, verbose=0):
     """
     args:
         output_path: directory to save computed features (.h5 file)
@@ -30,15 +32,15 @@ def compute_w_loader(output_path, loader, model, slide_id, verbose=0):
     mode = 'w'
     for count, data in enumerate(tqdm(loader)):
         with torch.inference_mode():
-            batch = data['img']
-            # TODO 去除掉为空的 img 和 coords
-            coords = data['coord'].numpy().astype(np.int32)
-            batch = batch.to(device, non_blocking=True)
+            if data['img'] is None:
+                continue
+            coords = np.array(data['coord']).astype(np.int32)
+            batch = data['img'].to(device, non_blocking=True)
 
             features = model(batch)
             features = features.cpu().numpy().astype(np.float32)
 
-            asset_dict = {'features': features, 'coords': coords, 'slide_id': slide_id}
+            asset_dict = {'features': features, 'coords': coords}
             save_hdf5(output_path, asset_dict, attr_dict=None, mode=mode)
             mode = 'a'
 
@@ -109,8 +111,19 @@ if __name__ == '__main__':
                                                   wsi=wsi,
                                                   img_transforms=img_transforms)
 
-            loader = DataLoader(dataset=dataset, batch_size=args.batch_size, **loader_kwargs)
-            output_file_path = compute_w_loader(output_path, loader=loader, model=model, slide_id=slide_id, verbose=1)
+
+            def collate_fn(batch):
+                batch = [item for item in batch if item is not None]  # 过滤无效数据
+                # 合并有效数据
+                if not batch:
+                    return {'img': None, 'coord': None}
+                imgs = torch.stack([item['img'] for item in batch])
+                coords = [item['coord'] for item in batch]
+                return {'img': imgs, 'coord': coords}
+
+
+            loader = DataLoader(dataset=dataset, batch_size=args.batch_size, collate_fn=collate_fn, **loader_kwargs)
+            output_file_path = compute_w_loader(output_path, loader=loader, model=model, verbose=1)
 
             time_elapsed = time.time() - time_start
             print('\ncomputing features for {} took {} s'.format(output_file_path, time_elapsed))
