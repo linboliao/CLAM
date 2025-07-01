@@ -104,8 +104,8 @@ class Whole_Slide_Bag_FP_NoCoords(Whole_Slide_Bag_FP):
         return {'img': img, 'coord': coord}
 
 
-step = 50
-it = 2
+step = 25
+it = 3
 print(f'提取 idx {step * it}~{step * (it + 1)} 的特征')
 
 

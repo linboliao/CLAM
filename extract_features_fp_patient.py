@@ -15,7 +15,7 @@ from utils.file_utils import save_hdf5
 from wsi import WSIOperator
 
 # TODO 指定 GPU
-GPU = 2
+GPU = 3
 device = torch.device(f'cuda:{GPU}') if torch.cuda.is_available() else torch.device('cpu')
 
 

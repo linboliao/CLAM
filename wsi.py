@@ -20,7 +20,7 @@ def is_background(img, threshold=20):
     if not isinstance(img, np.ndarray):
         img = np.array(img)
     diff = np.ptp(img, axis=2)  # ptp直接计算max-min
-    return (diff > threshold).mean() < 0.05
+    return (diff > threshold).mean() < 0.4
 
 
 class WSIOperator(openslide.OpenSlide):
